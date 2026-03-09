@@ -13,7 +13,8 @@ interface ManagedSession {
   idleTimer: NodeJS.Timeout;
   prompting: boolean;
   queue: Array<{ text: string; requestorId: string }>;
-  lastRequestorId: string;
+  /** Set only when executePrompt begins — stable for the duration of the prompt */
+  activePromptRequestorId: string;
 }
 
 export class SessionManager {
@@ -27,7 +28,6 @@ export class SessionManager {
   async prompt(channelId: string, text: string, agentConfig: AgentConfig, requestorId: string): Promise<string> {
     const session = await this.getOrCreate(channelId, agentConfig, requestorId);
     session.lastActivity = Date.now();
-    session.lastRequestorId = requestorId;
     this.resetIdleTimer(session, agentConfig.idle_timeout);
 
     if (session.prompting) {
@@ -35,11 +35,12 @@ export class SessionManager {
       return "queued";
     }
 
-    return this.executePrompt(session, text, agentConfig);
+    return this.executePrompt(session, text, requestorId, agentConfig);
   }
 
-  private async executePrompt(session: ManagedSession, text: string, agentConfig: AgentConfig): Promise<string> {
+  private async executePrompt(session: ManagedSession, text: string, requestorId: string, agentConfig: AgentConfig): Promise<string> {
     session.prompting = true;
+    session.activePromptRequestorId = requestorId;
     try {
       const result = await session.connection.prompt({
         sessionId: session.sessionId,
@@ -52,8 +53,7 @@ export class SessionManager {
       // Process queue — await and catch to prevent unhandled rejections (#3)
       const next = session.queue.shift();
       if (next) {
-        session.lastRequestorId = next.requestorId;
-        this.executePrompt(session, next.text, agentConfig).catch((err) => {
+        this.executePrompt(session, next.text, next.requestorId, agentConfig).catch((err) => {
           console.error(`Queued prompt failed for channel ${session.channelId}:`, err);
         });
       }
@@ -107,7 +107,7 @@ export class SessionManager {
       );
 
       const client = createAcpClient(channelId, this.handlers, () => {
-        return this.sessions.get(channelId)?.lastRequestorId ?? requestorId;
+        return this.sessions.get(channelId)?.activePromptRequestorId ?? requestorId;
       });
       connection = new ClientSideConnection((_agent) => client, stream);
 
@@ -143,7 +143,7 @@ export class SessionManager {
       idleTimer: this.startIdleTimer(channelId, config.idle_timeout),
       prompting: false,
       queue: [],
-      lastRequestorId: requestorId,
+      activePromptRequestorId: requestorId,
     };
 
     this.sessions.set(channelId, managed);
@@ -175,6 +175,12 @@ export class SessionManager {
 
   isPrompting(channelId: string): boolean {
     return this.sessions.get(channelId)?.prompting ?? false;
+  }
+
+  getActiveRequestorId(channelId: string): string | null {
+    const session = this.sessions.get(channelId);
+    if (!session?.prompting) return null;
+    return session.activePromptRequestorId;
   }
 
   getActiveChannels(): string[] {

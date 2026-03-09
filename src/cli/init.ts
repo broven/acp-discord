@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
@@ -92,12 +92,17 @@ export function makeInitCommand(): Command {
           const title = params.toolCall.title ?? "Unknown";
           const kind = params.toolCall.kind ?? "other";
 
-          // Auto-allow only safe file writes to the config directory
+          // Auto-allow only safe file writes within the config directory,
+          // validated against actual tool locations (not spoofable title) (#2)
           const isSafeWrite = kind === "write_text_file" || kind === "fs";
-          if (isSafeWrite) {
-            // Check if the title/description suggests writing within config dir
-            const looksLikeConfigWrite = title.includes(SAFE_WRITE_PREFIX) || title.includes("config.toml");
-            if (looksLikeConfigWrite) {
+          if (isSafeWrite && params.toolCall.locations?.length) {
+            const allPathsSafe = params.toolCall.locations.every(
+              (loc: { path: string }) => {
+                const resolved = resolve(loc.path);
+                return resolved.startsWith(SAFE_WRITE_PREFIX + "/") || resolved === SAFE_WRITE_PREFIX;
+              },
+            );
+            if (allPathsSafe) {
               const allowOption = params.options.find((o: { kind: string }) => o.kind === "allow_once");
               if (allowOption) {
                 return { outcome: { outcome: "selected" as const, optionId: allowOption.optionId } };

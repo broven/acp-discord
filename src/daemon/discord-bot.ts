@@ -236,6 +236,14 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
 
     if (interaction.customId.startsWith("stop_")) {
       const channelId = interaction.customId.replace("stop_", "");
+      const activeRequestor = sessionManager.getActiveRequestorId(channelId);
+
+      // Only the user who triggered the current prompt can stop it
+      if (activeRequestor && interaction.user.id !== activeRequestor) {
+        await interaction.reply({ content: "Only the user who started this prompt can stop it.", ephemeral: true });
+        return;
+      }
+
       sessionManager.cancel(channelId);
       await interaction.update({ components: [] });
     }
