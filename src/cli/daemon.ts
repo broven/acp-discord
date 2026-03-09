@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { isDaemonRunning, readPid, removePid } from "./pid.js";
+import { enableAutostart, disableAutostart } from "./autostart.js";
 
 const CONFIG_DIR = join(homedir(), ".acp-discord");
 const PID_PATH = join(CONFIG_DIR, "daemon.pid");
@@ -69,14 +70,14 @@ export function makeDaemonCommand(): Command {
     .command("enable")
     .description("Enable auto-start on boot")
     .action(async () => {
-      console.log("TODO: enable auto-start");
+      enableAutostart();
     });
 
   daemon
     .command("disable")
     .description("Disable auto-start on boot")
     .action(async () => {
-      console.log("TODO: disable auto-start");
+      disableAutostart();
     });
 
   return daemon;
