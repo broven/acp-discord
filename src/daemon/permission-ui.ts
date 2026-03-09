@@ -31,8 +31,13 @@ export async function sendPermissionRequest(
   toolTitle: string,
   toolKind: string,
   options: PermissionOption[],
+  requestorId: string,
   timeoutMs = 14 * 60 * 1000,
 ): Promise<{ outcome: "selected"; optionId: string } | { outcome: "cancelled" }> {
+  if (options.length === 0) {
+    return { outcome: "cancelled" };
+  }
+
   const embed = new EmbedBuilder()
     .setColor(0xffa500)
     .setTitle(`Permission: ${toolTitle}`)
@@ -46,16 +51,23 @@ export async function sendPermissionRequest(
       .setStyle(KIND_STYLES[opt.kind] ?? ButtonStyle.Secondary),
   );
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(buttons);
+  // Discord allows max 5 buttons per ActionRow
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(buttons.slice(i, i + 5)));
+  }
 
-  const msg = await channel.send({ embeds: [embed], components: [row] });
+  const msg = await channel.send({ embeds: [embed], components: rows });
 
   return new Promise((resolve) => {
-    const collector = msg.createMessageComponentCollector({ time: timeoutMs });
+    const collector = msg.createMessageComponentCollector({
+      filter: (i) => i.user.id === requestorId,
+      time: timeoutMs,
+    });
 
     collector.on("collect", async (interaction) => {
       const optionId = interaction.customId.replace("perm_", "");
-      await interaction.update({ components: [] }); // disable buttons
+      await interaction.update({ components: [] });
       collector.stop("selected");
       resolve({ outcome: "selected", optionId });
     });

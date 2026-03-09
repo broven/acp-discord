@@ -14,7 +14,7 @@ export function makeDaemonCommand(): Command {
 
   daemon
     .command("start")
-    .description("Start the daemon")
+    .description("Start the daemon (background)")
     .action(async () => {
       if (isDaemonRunning(PID_PATH)) {
         const pid = readPid(PID_PATH);
@@ -31,7 +31,30 @@ export function makeDaemonCommand(): Command {
       });
 
       child.unref();
-      console.log(`Daemon started (PID: ${child.pid})`);
+
+      // Wait briefly and verify the daemon wrote its PID file (#11)
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      if (isDaemonRunning(PID_PATH)) {
+        const pid = readPid(PID_PATH);
+        console.log(`Daemon started (PID: ${pid})`);
+      } else {
+        console.error(`Daemon failed to start (forked PID: ${child.pid}). Check config and logs.`);
+        process.exit(1);
+      }
+    });
+
+  daemon
+    .command("run")
+    .description("Run the daemon in foreground (for service managers)")
+    .action(async () => {
+      if (isDaemonRunning(PID_PATH)) {
+        const pid = readPid(PID_PATH);
+        console.log(`Daemon already running (PID: ${pid})`);
+        process.exit(1);
+      }
+      // Import and run directly in this process
+      const { runDaemon } = await import("../daemon/index.js");
+      await runDaemon();
     });
 
   daemon

@@ -52,10 +52,10 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       scheduleFlushReply(channelId);
     },
 
-    async onPermissionRequest(channelId, toolCall, options) {
-      const channel = discordClient.channels.cache.get(channelId) as TextChannel | undefined;
+    async onPermissionRequest(channelId, requestorId, toolCall, options) {
+      const channel = await fetchChannel(channelId);
       if (!channel) return { outcome: "cancelled" as const };
-      return sendPermissionRequest(channel, toolCall.title, toolCall.kind, options);
+      return sendPermissionRequest(channel, toolCall.title, toolCall.kind, options, requestorId);
     },
 
     onPromptComplete(channelId, _stopReason) {
@@ -75,12 +75,23 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
 
   // --- Display helpers ---
 
+  async function fetchChannel(channelId: string): Promise<TextChannel | null> {
+    const cached = discordClient.channels.cache.get(channelId) as TextChannel | undefined;
+    if (cached) return cached;
+    try {
+      const fetched = await discordClient.channels.fetch(channelId);
+      return fetched as TextChannel;
+    } catch {
+      return null;
+    }
+  }
+
   async function updateToolSummaryMessage(channelId: string) {
     const tools = toolStates.get(channelId);
     if (!tools) return;
 
     const content = formatToolSummary(tools);
-    const channel = discordClient.channels.cache.get(channelId) as TextChannel | undefined;
+    const channel = await fetchChannel(channelId);
     if (!channel) return;
 
     const stopButton = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -129,7 +140,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     const buffer = replyBuffers.get(channelId);
     if (!buffer) return;
 
-    const channel = discordClient.channels.cache.get(channelId) as TextChannel | undefined;
+    const channel = await fetchChannel(channelId);
     if (!channel) return;
 
     if (final) {
@@ -200,7 +211,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     if (!isMention) return;
 
     // Strip the mention prefix
-    let text = message.content.replace(/<@!?\d+>/g, "").trim();
+    const text = message.content.replace(/<@!?\d+>/g, "").trim();
 
     if (!text) {
       await message.reply("Please provide a message.");
@@ -211,7 +222,12 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       await message.reply("\u23F3 Agent is working. Your message has been queued.");
     }
 
-    await sessionManager.prompt(channelId, text, resolved.agent);
+    try {
+      await sessionManager.prompt(channelId, text, resolved.agent, message.author.id);
+    } catch (err) {
+      console.error(`Prompt failed for channel ${channelId}:`, err);
+      await message.reply("An error occurred while processing your request.").catch(() => {});
+    }
   });
 
   // Handle stop button clicks
@@ -246,7 +262,12 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       await interaction.editReply(`\uD83D\uDCAC Processing: ${text.slice(0, 100)}...`);
     }
 
-    await sessionManager.prompt(channelId, text, resolved.agent);
+    try {
+      await sessionManager.prompt(channelId, text, resolved.agent, interaction.user.id);
+    } catch (err) {
+      console.error(`Prompt failed for channel ${channelId}:`, err);
+      await interaction.followUp({ content: "An error occurred while processing your request.", ephemeral: true }).catch(() => {});
+    }
   });
 
   // Graceful shutdown

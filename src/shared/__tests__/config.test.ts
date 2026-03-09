@@ -41,6 +41,46 @@ describe("parseConfig", () => {
   it("throws on missing agents", () => {
     expect(() => parseConfig('[discord]\ntoken = "t"\n')).toThrow("agents");
   });
+
+  it("throws on missing agent command", () => {
+    expect(() => parseConfig(`
+[discord]
+token = "t"
+[agents.default]
+args = ["foo"]
+`)).toThrow("command");
+  });
+
+  it("throws on invalid args type", () => {
+    expect(() => parseConfig(`
+[discord]
+token = "t"
+[agents.default]
+command = "npx"
+args = "not-an-array"
+`)).toThrow("args");
+  });
+
+  it("throws on negative idle_timeout", () => {
+    expect(() => parseConfig(`
+[discord]
+token = "t"
+[agents.default]
+command = "npx"
+idle_timeout = -1
+`)).toThrow("idle_timeout");
+  });
+
+  it("throws on channel referencing unknown agent", () => {
+    expect(() => parseConfig(`
+[discord]
+token = "t"
+[agents.default]
+command = "npx"
+[channels.123]
+agent = "nonexistent"
+`)).toThrow("nonexistent");
+  });
 });
 
 describe("resolveChannelConfig", () => {

@@ -12,7 +12,8 @@ interface ManagedSession {
   lastActivity: number;
   idleTimer: NodeJS.Timeout;
   prompting: boolean;
-  queue: string[];
+  queue: Array<{ text: string; requestorId: string }>;
+  lastRequestorId: string;
 }
 
 export class SessionManager {
@@ -23,13 +24,14 @@ export class SessionManager {
     this.handlers = handlers;
   }
 
-  async prompt(channelId: string, text: string, agentConfig: AgentConfig): Promise<string> {
-    const session = await this.getOrCreate(channelId, agentConfig);
+  async prompt(channelId: string, text: string, agentConfig: AgentConfig, requestorId: string): Promise<string> {
+    const session = await this.getOrCreate(channelId, agentConfig, requestorId);
     session.lastActivity = Date.now();
+    session.lastRequestorId = requestorId;
     this.resetIdleTimer(session, agentConfig.idle_timeout);
 
     if (session.prompting) {
-      session.queue.push(text);
+      session.queue.push({ text, requestorId });
       return "queued";
     }
 
@@ -47,10 +49,13 @@ export class SessionManager {
       return result.stopReason;
     } finally {
       session.prompting = false;
-      // Process queue
+      // Process queue — await and catch to prevent unhandled rejections (#3)
       const next = session.queue.shift();
       if (next) {
-        this.executePrompt(session, next, agentConfig);
+        session.lastRequestorId = next.requestorId;
+        this.executePrompt(session, next.text, agentConfig).catch((err) => {
+          console.error(`Queued prompt failed for channel ${session.channelId}:`, err);
+        });
       }
     }
   }
@@ -62,16 +67,26 @@ export class SessionManager {
     }
   }
 
-  private async getOrCreate(channelId: string, agentConfig: AgentConfig): Promise<ManagedSession> {
+  private async getOrCreate(channelId: string, agentConfig: AgentConfig, requestorId: string): Promise<ManagedSession> {
     const existing = this.sessions.get(channelId);
     if (existing) return existing;
-    return this.createSession(channelId, agentConfig);
+    return this.createSession(channelId, agentConfig, requestorId);
   }
 
-  private async createSession(channelId: string, config: AgentConfig): Promise<ManagedSession> {
+  private async createSession(channelId: string, config: AgentConfig, requestorId: string): Promise<ManagedSession> {
     const proc = spawn(config.command, config.args, {
       stdio: ["pipe", "pipe", "inherit"],
       cwd: config.cwd,
+    });
+
+    // Handle spawn errors (ENOENT, permission denied, etc.) (#4)
+    proc.on("error", (err) => {
+      console.error(`Agent process error for channel ${channelId}:`, err);
+      const session = this.sessions.get(channelId);
+      if (session?.process === proc) {
+        clearTimeout(session.idleTimer);
+        this.sessions.delete(channelId);
+      }
     });
 
     proc.on("exit", () => {
@@ -82,31 +97,42 @@ export class SessionManager {
       }
     });
 
-    const stream = ndJsonStream(
-      Writable.toWeb(proc.stdin!) as WritableStream<Uint8Array>,
-      Readable.toWeb(proc.stdout!) as ReadableStream<Uint8Array>,
-    );
+    // Wrap initialize/newSession in try/catch to clean up process on failure (#5)
+    let connection: ClientSideConnection;
+    let sessionId: string;
+    try {
+      const stream = ndJsonStream(
+        Writable.toWeb(proc.stdin!) as WritableStream<Uint8Array>,
+        Readable.toWeb(proc.stdout!) as ReadableStream<Uint8Array>,
+      );
 
-    const client = createAcpClient(channelId, this.handlers);
-    const connection = new ClientSideConnection((_agent) => client, stream);
+      const client = createAcpClient(channelId, this.handlers, () => {
+        return this.sessions.get(channelId)?.lastRequestorId ?? requestorId;
+      });
+      connection = new ClientSideConnection((_agent) => client, stream);
 
-    await connection.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        terminal: true,
-      },
-      clientInfo: {
-        name: "acp-discord",
-        title: "ACP Discord Bot",
-        version: "0.1.0",
-      },
-    });
+      await connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
+          terminal: true,
+        },
+        clientInfo: {
+          name: "acp-discord",
+          title: "ACP Discord Bot",
+          version: "0.1.0",
+        },
+      });
 
-    const { sessionId } = await connection.newSession({
-      cwd: config.cwd,
-      mcpServers: [],
-    });
+      const result = await connection.newSession({
+        cwd: config.cwd,
+        mcpServers: [],
+      });
+      sessionId = result.sessionId;
+    } catch (err) {
+      proc.kill();
+      throw err;
+    }
 
     const managed: ManagedSession = {
       channelId,
@@ -117,6 +143,7 @@ export class SessionManager {
       idleTimer: this.startIdleTimer(channelId, config.idle_timeout),
       prompting: false,
       queue: [],
+      lastRequestorId: requestorId,
     };
 
     this.sessions.set(channelId, managed);

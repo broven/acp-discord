@@ -11,6 +11,7 @@ export interface AcpEventHandlers {
   onAgentMessageChunk(channelId: string, text: string): void;
   onPermissionRequest(
     channelId: string,
+    requestorId: string,
     toolCall: { toolCallId: string; title: string; kind: string },
     options: Array<{ optionId: string; name: string; kind: string }>,
   ): Promise<{ outcome: "selected"; optionId: string } | { outcome: "cancelled" }>;
@@ -20,11 +21,13 @@ export interface AcpEventHandlers {
 export function createAcpClient(
   channelId: string,
   handlers: AcpEventHandlers,
+  getRequestorId: () => string,
 ): Client {
   return {
     async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
       const result = await handlers.onPermissionRequest(
         channelId,
+        getRequestorId(),
         {
           toolCallId: params.toolCall.toolCallId,
           title: params.toolCall.title ?? "Unknown",

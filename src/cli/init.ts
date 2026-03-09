@@ -7,9 +7,13 @@ import { Readable, Writable } from "node:stream";
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import type { Client } from "@agentclientprotocol/sdk";
 import { detectInstalledAgents } from "../shared/detect-agents.js";
+import { parseConfig } from "../shared/config.js";
 
 const CONFIG_DIR = join(homedir(), ".acp-discord");
 const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
+
+// Only auto-allow writes to the config directory during setup
+const SAFE_WRITE_PREFIX = CONFIG_DIR;
 
 const INIT_SYSTEM_PROMPT = `You are a setup assistant for acp-discord, a Discord bot that connects Discord channels to ACP coding agents.
 
@@ -85,14 +89,52 @@ export function makeInitCommand(): Command {
 
       const client: Client = {
         async requestPermission(params) {
-          // Auto-allow file writes during setup
-          const allowOption = params.options.find((o: { kind: string }) => o.kind === "allow_once");
-          return {
-            outcome: {
-              outcome: "selected" as const,
-              optionId: allowOption?.optionId ?? params.options[0].optionId,
-            },
-          };
+          const title = params.toolCall.title ?? "Unknown";
+          const kind = params.toolCall.kind ?? "other";
+
+          // Auto-allow only safe file writes to the config directory
+          const isSafeWrite = kind === "write_text_file" || kind === "fs";
+          if (isSafeWrite) {
+            // Check if the title/description suggests writing within config dir
+            const looksLikeConfigWrite = title.includes(SAFE_WRITE_PREFIX) || title.includes("config.toml");
+            if (looksLikeConfigWrite) {
+              const allowOption = params.options.find((o: { kind: string }) => o.kind === "allow_once");
+              if (allowOption) {
+                return { outcome: { outcome: "selected" as const, optionId: allowOption.optionId } };
+              }
+            }
+          }
+
+          // For all other operations, ask the user
+          console.log(`\n--- Permission Request ---`);
+          console.log(`Tool: ${title}`);
+          console.log(`Type: ${kind}`);
+          console.log(`Options:`);
+          for (let i = 0; i < params.options.length; i++) {
+            const opt = params.options[i];
+            console.log(`  ${i + 1}. ${opt.name} (${opt.kind})`);
+          }
+
+          const answer = await askUser(`Choose option (1-${params.options.length}, or 'c' to cancel): `);
+          if (answer.toLowerCase() === "c") {
+            const rejectOption = params.options.find((o: { kind: string }) => o.kind === "reject_once");
+            if (rejectOption) {
+              return { outcome: { outcome: "selected" as const, optionId: rejectOption.optionId } };
+            }
+            return { outcome: { outcome: "cancelled" as const } };
+          }
+
+          const idx = parseInt(answer, 10) - 1;
+          if (idx >= 0 && idx < params.options.length) {
+            return { outcome: { outcome: "selected" as const, optionId: params.options[idx].optionId } };
+          }
+
+          // Invalid input — default to reject
+          const rejectOption = params.options.find((o: { kind: string }) => o.kind === "reject_once");
+          if (rejectOption) {
+            return { outcome: { outcome: "selected" as const, optionId: rejectOption.optionId } };
+          }
+          return { outcome: { outcome: "cancelled" as const } };
         },
         async sessionUpdate(params) {
           const update = params.update;
@@ -108,7 +150,7 @@ export function makeInitCommand(): Command {
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities: {
           fs: { readTextFile: true, writeTextFile: true },
-          terminal: true,
+          terminal: false,
         },
         clientInfo: { name: "acp-discord-init", title: "ACP Discord Init", version: "0.1.0" },
       });
@@ -140,16 +182,15 @@ export function makeInitCommand(): Command {
         });
 
         if (result.stopReason === "end_turn" && existsSync(CONFIG_PATH)) {
-          // Check if config was written
+          // Validate the written config is structurally valid (#9)
           try {
             const content = readFileSync(CONFIG_PATH, "utf-8");
-            if (content.includes("[discord]")) {
-              console.log("\n\nSetup complete! Config written to", CONFIG_PATH);
-              console.log("Run `npx acp-discord daemon start` to begin.");
-              break;
-            }
+            parseConfig(content); // throws if invalid
+            console.log("\n\nSetup complete! Config written to", CONFIG_PATH);
+            console.log("Run `npx acp-discord daemon start` to begin.");
+            break;
           } catch {
-            // config not ready yet
+            // config not valid yet, continue
           }
         }
       }

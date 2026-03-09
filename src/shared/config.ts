@@ -9,6 +9,9 @@ export function parseConfig(toml: string): AppConfig {
   if (!discord?.token || typeof discord.token !== "string") {
     throw new Error("Missing required: discord.token");
   }
+  if (discord.token.trim().length === 0) {
+    throw new Error("discord.token must not be empty");
+  }
 
   const agents = raw.agents as Record<string, Record<string, unknown>> | undefined;
   if (!agents || Object.keys(agents).length === 0) {
@@ -17,19 +20,54 @@ export function parseConfig(toml: string): AppConfig {
 
   const parsedAgents: AppConfig["agents"] = {};
   for (const [name, agent] of Object.entries(agents)) {
+    // Validate command is a non-empty string
+    if (!agent.command || typeof agent.command !== "string") {
+      throw new Error(`agents.${name}.command must be a non-empty string`);
+    }
+
+    // Validate args is an array of strings
+    if (agent.args !== undefined) {
+      if (!Array.isArray(agent.args) || !agent.args.every((a: unknown) => typeof a === "string")) {
+        throw new Error(`agents.${name}.args must be an array of strings`);
+      }
+    }
+
+    // Validate idle_timeout is a positive number
+    if (agent.idle_timeout !== undefined) {
+      if (typeof agent.idle_timeout !== "number" || agent.idle_timeout <= 0) {
+        throw new Error(`agents.${name}.idle_timeout must be a positive number`);
+      }
+    }
+
+    // Validate cwd is a string if provided
+    if (agent.cwd !== undefined && typeof agent.cwd !== "string") {
+      throw new Error(`agents.${name}.cwd must be a string`);
+    }
+
     parsedAgents[name] = {
-      command: String(agent.command ?? ""),
+      command: agent.command,
       args: (agent.args as string[]) ?? [],
-      cwd: String(agent.cwd ?? process.cwd()),
-      idle_timeout: Number(agent.idle_timeout ?? 600),
+      cwd: typeof agent.cwd === "string" ? agent.cwd : process.cwd(),
+      idle_timeout: typeof agent.idle_timeout === "number" ? agent.idle_timeout : 600,
     };
   }
 
   const channels = (raw.channels ?? {}) as Record<string, Record<string, unknown>>;
   const parsedChannels: AppConfig["channels"] = {};
   for (const [id, ch] of Object.entries(channels)) {
+    const agentRef = ch.agent ?? "default";
+    if (typeof agentRef !== "string") {
+      throw new Error(`channels.${id}.agent must be a string`);
+    }
+    if (!parsedAgents[agentRef]) {
+      throw new Error(`channels.${id}.agent references unknown agent "${agentRef}"`);
+    }
+    if (ch.cwd !== undefined && typeof ch.cwd !== "string") {
+      throw new Error(`channels.${id}.cwd must be a string`);
+    }
+
     parsedChannels[id] = {
-      agent: String(ch.agent ?? "default"),
+      agent: agentRef,
       cwd: ch.cwd ? String(ch.cwd) : undefined,
     };
   }
