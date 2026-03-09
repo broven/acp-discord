@@ -1,1 +1,3 @@
-console.log("acp-discord");
+import { createCli } from "./cli/index.js";
+
+createCli().parse();
