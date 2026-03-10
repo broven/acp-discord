@@ -1,3 +1,6 @@
+# Project-local skills
+.claude/skills/
+
 # Worktrees
 .worktrees/
 
