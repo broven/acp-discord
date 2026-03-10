@@ -289,5 +289,18 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     discordClient.destroy();
   });
 
-  await discordClient.login(config.discord.token);
+  try {
+    await discordClient.login(config.discord.token);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("TOKEN_INVALID") || message.includes("An invalid token was provided")) {
+      console.error("Error: Invalid Discord bot token. Check your config.toml.");
+    } else if (message.includes("ConnectTimeout") || message.includes("ETIMEDOUT") || message.includes("ECONNREFUSED")) {
+      console.error("Error: Cannot connect to Discord API. Check your network or proxy settings.");
+      console.error("Hint: Set HTTPS_PROXY=http://127.0.0.1:7890 if you need a proxy.");
+    } else {
+      console.error("Error: Failed to connect to Discord:", message);
+    }
+    process.exit(1);
+  }
 }
