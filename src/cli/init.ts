@@ -9,6 +9,8 @@ import type { Client } from "@agentclientprotocol/sdk";
 import { detectInstalledAgents } from "../shared/detect-agents.js";
 import { parseConfig } from "../shared/config.js";
 
+declare const __VERSION__: string;
+
 const CONFIG_DIR = join(homedir(), ".acp-discord");
 const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
 
@@ -96,7 +98,7 @@ export function makeInitCommand(): Command {
 
           // Auto-allow only safe file writes within the config directory,
           // validated against actual tool locations (not spoofable title) (#2)
-          const isSafeWrite = kind === "write_text_file" || kind === "fs";
+          const isSafeWrite = kind === "write_text_file" || kind === "fs" || kind === "edit";
           if (isSafeWrite && params.toolCall.locations?.length) {
             const allPathsSafe = params.toolCall.locations.every(
               (loc: { path: string }) => {
@@ -159,7 +161,7 @@ export function makeInitCommand(): Command {
           fs: { readTextFile: true, writeTextFile: true },
           terminal: false,
         },
-        clientInfo: { name: "acp-discord-init", title: "ACP Discord Init", version: "0.1.0" },
+        clientInfo: { name: "acp-discord-init", title: "ACP Discord Init", version: __VERSION__ },
       });
 
       mkdirSync(CONFIG_DIR, { recursive: true });
@@ -177,6 +179,21 @@ export function makeInitCommand(): Command {
           { type: "text", text: `The ACP agent package is: ${selected.acpPackage}\nPlease start the setup.` },
         ],
       });
+
+      // Check if config was already written during the initial prompt
+      if (existsSync(CONFIG_PATH)) {
+        try {
+          const content = readFileSync(CONFIG_PATH, "utf-8");
+          parseConfig(content);
+          console.log("\n\nSetup complete! Config written to", CONFIG_PATH);
+          console.log("Run `npx acp-discord daemon start` to begin.");
+          rl.close();
+          proc.kill();
+          process.exit(0);
+        } catch {
+          // config not valid yet, continue to interactive loop
+        }
+      }
 
       // Interactive loop
       while (true) {
@@ -204,5 +221,6 @@ export function makeInitCommand(): Command {
 
       rl.close();
       proc.kill();
+      process.exit(0);
     });
 }

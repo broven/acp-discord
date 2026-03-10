@@ -15,8 +15,8 @@ import type { AppConfig } from "../shared/types.js";
 import { ChannelRouter } from "./channel-router.js";
 import { SessionManager } from "./session-manager.js";
 import { sendPermissionRequest } from "./permission-ui.js";
-import { splitMessage, formatToolSummary, type ToolStatus } from "./message-bridge.js";
-import type { AcpEventHandlers } from "./acp-client.js";
+import { splitMessage, formatToolSummary, formatDiff, type ToolStatus } from "./message-bridge.js";
+import type { AcpEventHandlers, DiffContent } from "./acp-client.js";
 
 export async function startDiscordBot(config: AppConfig): Promise<void> {
   const router = new ChannelRouter(config);
@@ -27,22 +27,28 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   const replyBuffers = new Map<string, string>();
   const replyMessages = new Map<string, Message>();
   const flushTimers = new Map<string, NodeJS.Timeout>();
+  // channelId -> toolCallId -> DiffContent[]
+  const pendingDiffs = new Map<string, Map<string, DiffContent[]>>();
 
   let discordClient: Client;
 
   const handlers: AcpEventHandlers = {
-    onToolCall(channelId, toolCallId, title, _kind, status) {
+    onToolCall(channelId, toolCallId, title, _kind, status, diffs) {
       if (!toolStates.has(channelId)) toolStates.set(channelId, new Map());
       toolStates.get(channelId)!.set(toolCallId, { title, status: status as ToolStatus });
+      accumulateDiffs(channelId, toolCallId, diffs);
       updateToolSummaryMessage(channelId);
+      if (status === "completed") sendDiffsForTool(channelId, toolCallId);
     },
 
-    onToolCallUpdate(channelId, toolCallId, status) {
+    onToolCallUpdate(channelId, toolCallId, status, diffs) {
       const tools = toolStates.get(channelId);
       const tool = tools?.get(toolCallId);
       if (tool) {
         tool.status = status as ToolStatus;
+        accumulateDiffs(channelId, toolCallId, diffs);
         updateToolSummaryMessage(channelId);
+        if (status === "completed") sendDiffsForTool(channelId, toolCallId);
       }
     },
 
@@ -68,12 +74,37 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       toolSummaryMessages.delete(channelId);
       replyBuffers.delete(channelId);
       replyMessages.delete(channelId);
+      pendingDiffs.delete(channelId);
     },
   };
 
   const sessionManager = new SessionManager(handlers);
 
   // --- Display helpers ---
+
+  function accumulateDiffs(channelId: string, toolCallId: string, diffs: DiffContent[]) {
+    if (diffs.length === 0) return;
+    if (!pendingDiffs.has(channelId)) pendingDiffs.set(channelId, new Map());
+    const channelDiffs = pendingDiffs.get(channelId)!;
+    const existing = channelDiffs.get(toolCallId) ?? [];
+    channelDiffs.set(toolCallId, existing.concat(diffs));
+  }
+
+  async function sendDiffsForTool(channelId: string, toolCallId: string) {
+    const channelDiffs = pendingDiffs.get(channelId);
+    const diffs = channelDiffs?.get(toolCallId);
+    if (!diffs || diffs.length === 0) return;
+
+    const channel = await fetchChannel(channelId);
+    if (!channel) return;
+
+    const messages = formatDiff(diffs);
+    for (const msg of messages) {
+      await channel.send(msg);
+    }
+
+    channelDiffs!.delete(toolCallId);
+  }
 
   async function fetchChannel(channelId: string): Promise<TextChannel | null> {
     const cached = discordClient.channels.cache.get(channelId) as TextChannel | undefined;
@@ -180,7 +211,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   discordClient.on(Events.ClientReady, async (c) => {
     console.log(`Discord bot ready: ${c.user.tag}`);
 
-    // Register /ask slash command
+    // Register slash commands
     const askCommand = new SlashCommandBuilder()
       .setName("ask")
       .setDescription("Ask the coding agent a question")
@@ -188,12 +219,16 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
         opt.setName("message").setDescription("Your message").setRequired(true),
       );
 
+    const clearCommand = new SlashCommandBuilder()
+      .setName("clear")
+      .setDescription("Clear the agent session and start fresh");
+
     const rest = new REST().setToken(config.discord.token);
     try {
       await rest.put(Routes.applicationCommands(c.application.id), {
-        body: [askCommand.toJSON()],
+        body: [askCommand.toJSON(), clearCommand.toJSON()],
       });
-      console.log("Registered /ask command");
+      console.log("Registered /ask and /clear commands");
     } catch (err) {
       console.error("Failed to register commands:", err);
     }
@@ -276,6 +311,26 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       console.error(`Prompt failed for channel ${channelId}:`, err);
       await interaction.followUp({ content: "An error occurred while processing your request.", ephemeral: true }).catch(() => {});
     }
+  });
+
+  // Handle /clear command
+  discordClient.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== "clear") return;
+
+    const channelId = interaction.channelId;
+    sessionManager.teardown(channelId);
+
+    // Clean up display state
+    toolStates.delete(channelId);
+    toolSummaryMessages.delete(channelId);
+    replyBuffers.delete(channelId);
+    replyMessages.delete(channelId);
+    const timer = flushTimers.get(channelId);
+    if (timer) clearTimeout(timer);
+    flushTimers.delete(channelId);
+
+    await interaction.reply("Session cleared. Next message will start a fresh agent.");
   });
 
   // Graceful shutdown
