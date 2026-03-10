@@ -5,9 +5,15 @@ import type {
   SessionNotification,
 } from "@agentclientprotocol/sdk";
 
+export interface DiffContent {
+  path: string;
+  oldText?: string | null;
+  newText: string;
+}
+
 export interface AcpEventHandlers {
-  onToolCall(channelId: string, toolCallId: string, title: string, kind: string, status: string): void;
-  onToolCallUpdate(channelId: string, toolCallId: string, status: string): void;
+  onToolCall(channelId: string, toolCallId: string, title: string, kind: string, status: string, diffs: DiffContent[]): void;
+  onToolCallUpdate(channelId: string, toolCallId: string, status: string, diffs: DiffContent[]): void;
   onAgentMessageChunk(channelId: string, text: string): void;
   onPermissionRequest(
     channelId: string,
@@ -56,24 +62,43 @@ export function createAcpClient(
           break;
         }
         case "tool_call": {
+          const toolCallDiffs = extractDiffs(update.content);
           handlers.onToolCall(
             channelId,
             update.toolCallId,
             update.title ?? "Unknown",
             update.kind ?? "other",
             update.status ?? "pending",
+            toolCallDiffs,
           );
           break;
         }
         case "tool_call_update": {
+          const updateDiffs = extractDiffs(update.content);
           handlers.onToolCallUpdate(
             channelId,
             update.toolCallId,
             update.status ?? "in_progress",
+            updateDiffs,
           );
           break;
         }
       }
     },
   };
+}
+
+function extractDiffs(content: unknown): DiffContent[] {
+  if (!Array.isArray(content)) return [];
+  const diffs: DiffContent[] = [];
+  for (const item of content) {
+    if (item && typeof item === "object" && "type" in item && item.type === "diff") {
+      diffs.push({
+        path: (item as { path: string }).path,
+        oldText: (item as { oldText?: string | null }).oldText ?? null,
+        newText: (item as { newText: string }).newText,
+      });
+    }
+  }
+  return diffs;
 }
