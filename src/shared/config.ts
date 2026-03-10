@@ -65,10 +65,14 @@ export function parseConfig(toml: string): AppConfig {
     if (ch.cwd !== undefined && typeof ch.cwd !== "string") {
       throw new Error(`channels.${id}.cwd must be a string`);
     }
+    if (ch.auto_reply !== undefined && typeof ch.auto_reply !== "boolean") {
+      throw new Error(`channels.${id}.auto_reply must be a boolean`);
+    }
 
     parsedChannels[id] = {
       agent: agentRef,
       cwd: ch.cwd ? String(ch.cwd) : undefined,
+      auto_reply: ch.auto_reply === true,
     };
   }
 
@@ -100,5 +104,6 @@ export function resolveChannelConfig(
       ...agentConf,
       cwd: channelConf.cwd ?? agentConf.cwd,
     },
+    autoReply: channelConf.auto_reply === true,
   };
 }

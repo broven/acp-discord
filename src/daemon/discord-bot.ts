@@ -208,9 +208,9 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     if (!resolved) return;
 
     const isMention = message.mentions.has(discordClient.user!);
-    if (!isMention) return;
+    if (!resolved.autoReply && !isMention) return;
 
-    // Strip the mention prefix
+    // Strip mention prefix if present
     const text = message.content.replace(/<@!?\d+>/g, "").trim();
 
     if (!text) {
