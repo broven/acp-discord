@@ -13,7 +13,7 @@ export interface DiffContent {
 
 export interface AcpEventHandlers {
   onToolCall(channelId: string, toolCallId: string, title: string, kind: string, status: string, diffs: DiffContent[], rawInput?: Record<string, unknown>): void;
-  onToolCallUpdate(channelId: string, toolCallId: string, status: string, diffs: DiffContent[]): void;
+  onToolCallUpdate(channelId: string, toolCallId: string, status: string, diffs: DiffContent[], rawInput?: Record<string, unknown>): void;
   onAgentMessageChunk(channelId: string, text: string): void;
   onPermissionRequest(
     channelId: string,
@@ -83,11 +83,16 @@ export function createAcpClient(
         }
         case "tool_call_update": {
           const updateDiffs = extractDiffs(update.content);
+          const updateRawVal = (update as Record<string, unknown>).rawInput;
+          const updateRawInput = typeof updateRawVal === "object" && updateRawVal !== null && !Array.isArray(updateRawVal)
+            ? (updateRawVal as Record<string, unknown>)
+            : undefined;
           handlers.onToolCallUpdate(
             channelId,
             update.toolCallId,
             update.status ?? "in_progress",
             updateDiffs,
+            updateRawInput,
           );
           break;
         }

@@ -43,11 +43,12 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       if (status === "completed") sendDiffsForTool(channelId, toolCallId);
     },
 
-    onToolCallUpdate(channelId, toolCallId, status, diffs) {
+    onToolCallUpdate(channelId, toolCallId, status, diffs, rawInput) {
       const tools = toolStates.get(channelId);
       const tool = tools?.get(toolCallId);
       if (tool) {
         tool.status = status as ToolStatus;
+        if (rawInput && !tool.rawInput) tool.rawInput = rawInput;
         accumulateDiffs(channelId, toolCallId, diffs);
         updateToolSummaryMessage(channelId);
         if (status === "completed") sendDiffsForTool(channelId, toolCallId);
