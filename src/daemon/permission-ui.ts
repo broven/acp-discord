@@ -3,6 +3,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  type Message,
   type TextChannel,
 } from "discord.js";
 import type { DiffContent } from "./acp-client.js";
@@ -43,11 +44,12 @@ export async function sendPermissionRequest(
 
   // Send diffs before the permission embed so the user can review changes
   let diffsSent = false;
+  const diffMsgs: Message[] = [];
   if (diffs.length > 0) {
     try {
       const diffMessages = formatDiff(diffs);
-      for (const msg of diffMessages) {
-        await channel.send(msg);
+      for (const content of diffMessages) {
+        diffMsgs.push(await channel.send(content));
       }
       diffsSent = true;
     } catch (err) {
@@ -82,16 +84,22 @@ export async function sendPermissionRequest(
       time: timeoutMs,
     });
 
+    const cleanup = () => {
+      for (const dm of diffMsgs) dm.delete().catch(() => {});
+      msg.delete().catch(() => msg.edit({ components: [] }).catch(() => {}));
+    };
+
     collector.on("collect", async (interaction) => {
       const optionId = interaction.customId.replace("perm_", "");
-      await interaction.update({ components: [] });
+      await interaction.deferUpdate();
+      cleanup();
       collector.stop("selected");
       resolve({ outcome: "selected", optionId, diffsSent });
     });
 
     collector.on("end", (_collected, reason) => {
-      if (reason === "time") {
-        msg.edit({ components: [] }).catch(() => {});
+      if (reason !== "selected") {
+        cleanup();
         resolve({ outcome: "cancelled", diffsSent });
       }
     });
