@@ -6,12 +6,15 @@ Send a message in Discord, get AI coding assistance back — with tool call visu
 
 ## Features
 
-- **Slash commands & mentions** — `/ask <message>` or `@bot message`
+- **Slash commands & mentions** — `/ask <message>`, `/clear`, or `@bot message`
 - **Real-time streaming** — agent responses stream into Discord with smart message splitting
-- **Tool call visualization** — see what the agent is doing with emoji status indicators
-- **Permission UI** — Discord buttons for approving/denying agent actions
+- **File diffs** — see unified diffs in Discord when the agent modifies files
+- **Tool call visualization** — see what the agent is doing (⏳ pending → 🔄 running → ✅ done / ❌ failed), with a ⏹️ stop button to cancel
+- **Permission UI** — Discord buttons for approving/denying agent actions, with file diffs shown inline for review before approval
+- **Auto-reply mode** — optionally respond to all messages in a channel, not just mentions
 - **Multi-agent support** — different channels can use different agents
 - **Daemon mode** — runs in background with auto-start (systemd/launchd)
+- **Self-update** — `acp-discord update` to update in-place, auto-restarts the daemon
 - **Interactive setup** — guided `init` wizard for first-time configuration
 
 ## Prerequisites
@@ -42,11 +45,12 @@ token = "your-discord-bot-token"
 command = "claude-code"
 args = ["--acp"]
 cwd = "/path/to/your/project"
-idle_timeout = 600  # seconds, optional
+idle_timeout = 600  # seconds before idle session is terminated (default: 600)
 
 [channels.1234567890123456]
 agent = "claude"
-cwd = "/override/path"  # optional, per-channel override
+cwd = "/override/path"   # optional, per-channel working directory override
+auto_reply = true         # optional, respond to all messages (default: false, mention-only)
 ```
 
 ### Discord Bot Setup
@@ -74,6 +78,9 @@ acp-discord daemon status   # Check if running
 # Auto-start on boot
 acp-discord daemon enable   # Setup systemd (Linux) / launchd (macOS)
 acp-discord daemon disable  # Remove auto-start
+
+# Self-update
+acp-discord update          # Update to latest version, auto-restarts daemon
 ```
 
 ### Discord Commands
@@ -81,7 +88,10 @@ acp-discord daemon disable  # Remove auto-start
 | Command | Description |
 |---------|-------------|
 | `/ask <message>` | Send a prompt to the coding agent |
+| `/clear` | Clear the current session and start fresh |
 | `@bot <message>` | Mention the bot to send a prompt |
+
+If a prompt is sent while the agent is already working, it gets queued and processed after the current task completes.
 
 ### Development
 
