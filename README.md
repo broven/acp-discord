@@ -10,7 +10,7 @@ Send a message in Discord, get AI coding assistance back — with tool call visu
 - **Real-time streaming** — agent responses stream into Discord with smart message splitting
 - **File diffs** — see unified diffs in Discord when the agent modifies files
 - **Tool call visualization** — see what the agent is doing (⏳ pending → 🔄 running → ✅ done / ❌ failed), with a ⏹️ stop button to cancel
-- **Permission UI** — Discord buttons for approving/denying agent actions
+- **Permission UI** — Discord buttons for approving/denying agent actions, with file diffs shown inline for review before approval
 - **Auto-reply mode** — optionally respond to all messages in a channel, not just mentions
 - **Multi-agent support** — different channels can use different agents
 - **Daemon mode** — runs in background with auto-start (systemd/launchd)

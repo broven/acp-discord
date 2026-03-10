@@ -29,6 +29,8 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   const flushTimers = new Map<string, NodeJS.Timeout>();
   // channelId -> toolCallId -> DiffContent[]
   const pendingDiffs = new Map<string, Map<string, DiffContent[]>>();
+  // channelId -> Set of toolCallIds whose diffs were already shown at permission-request time
+  const permissionDiffShown = new Map<string, Set<string>>();
 
   let discordClient: Client;
 
@@ -58,10 +60,15 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       scheduleFlushReply(channelId);
     },
 
-    async onPermissionRequest(channelId, requestorId, toolCall, options) {
+    async onPermissionRequest(channelId, requestorId, toolCall, options, diffs) {
       const channel = await fetchChannel(channelId);
       if (!channel) return { outcome: "cancelled" as const };
-      return sendPermissionRequest(channel, toolCall.title, toolCall.kind, options, requestorId);
+      const result = await sendPermissionRequest(channel, toolCall.title, toolCall.kind, options, requestorId, diffs);
+      if (result.diffsSent) {
+        if (!permissionDiffShown.has(channelId)) permissionDiffShown.set(channelId, new Set());
+        permissionDiffShown.get(channelId)!.add(toolCall.toolCallId);
+      }
+      return result;
     },
 
     onPromptComplete(channelId, _stopReason) {
@@ -75,6 +82,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       replyBuffers.delete(channelId);
       replyMessages.delete(channelId);
       pendingDiffs.delete(channelId);
+      permissionDiffShown.delete(channelId);
     },
   };
 
@@ -91,6 +99,14 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   }
 
   async function sendDiffsForTool(channelId: string, toolCallId: string) {
+    // Skip if diffs were already shown at permission-request time
+    const shownSet = permissionDiffShown.get(channelId);
+    if (shownSet?.has(toolCallId)) {
+      shownSet.delete(toolCallId);
+      pendingDiffs.get(channelId)?.delete(toolCallId);
+      return;
+    }
+
     const channelDiffs = pendingDiffs.get(channelId);
     const diffs = channelDiffs?.get(toolCallId);
     if (!diffs || diffs.length === 0) return;
@@ -326,6 +342,8 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     toolSummaryMessages.delete(channelId);
     replyBuffers.delete(channelId);
     replyMessages.delete(channelId);
+    pendingDiffs.delete(channelId);
+    permissionDiffShown.delete(channelId);
     const timer = flushTimers.get(channelId);
     if (timer) clearTimeout(timer);
     flushTimers.delete(channelId);

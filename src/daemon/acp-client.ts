@@ -20,6 +20,7 @@ export interface AcpEventHandlers {
     requestorId: string,
     toolCall: { toolCallId: string; title: string; kind: string },
     options: Array<{ optionId: string; name: string; kind: string }>,
+    diffs: DiffContent[],
   ): Promise<{ outcome: "selected"; optionId: string } | { outcome: "cancelled" }>;
   onPromptComplete(channelId: string, stopReason: string): void;
 }
@@ -31,6 +32,7 @@ export function createAcpClient(
 ): Client {
   return {
     async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+      const diffs = extractDiffs((params.toolCall as { content?: unknown }).content);
       const result = await handlers.onPermissionRequest(
         channelId,
         getRequestorId(),
@@ -44,6 +46,7 @@ export function createAcpClient(
           name: o.name,
           kind: o.kind,
         })),
+        diffs,
       );
 
       if (result.outcome === "selected") {
@@ -93,11 +96,10 @@ function extractDiffs(content: unknown): DiffContent[] {
   const diffs: DiffContent[] = [];
   for (const item of content) {
     if (item && typeof item === "object" && "type" in item && item.type === "diff") {
-      diffs.push({
-        path: (item as { path: string }).path,
-        oldText: (item as { oldText?: string | null }).oldText ?? null,
-        newText: (item as { newText: string }).newText,
-      });
+      const { path, oldText, newText } = item as Record<string, unknown>;
+      if (typeof path !== "string" || typeof newText !== "string") continue;
+      if (oldText !== undefined && oldText !== null && typeof oldText !== "string") continue;
+      diffs.push({ path, oldText: (oldText as string | null) ?? null, newText });
     }
   }
   return diffs;
