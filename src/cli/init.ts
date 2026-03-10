@@ -9,6 +9,8 @@ import type { Client } from "@agentclientprotocol/sdk";
 import { detectInstalledAgents } from "../shared/detect-agents.js";
 import { parseConfig } from "../shared/config.js";
 
+declare const __VERSION__: string;
+
 const CONFIG_DIR = join(homedir(), ".acp-discord");
 const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
 
@@ -159,7 +161,7 @@ export function makeInitCommand(): Command {
           fs: { readTextFile: true, writeTextFile: true },
           terminal: false,
         },
-        clientInfo: { name: "acp-discord-init", title: "ACP Discord Init", version: "0.1.0" },
+        clientInfo: { name: "acp-discord-init", title: "ACP Discord Init", version: __VERSION__ },
       });
 
       mkdirSync(CONFIG_DIR, { recursive: true });
