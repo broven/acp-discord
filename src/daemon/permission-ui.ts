@@ -5,6 +5,8 @@ import {
   EmbedBuilder,
   type TextChannel,
 } from "discord.js";
+import type { DiffContent } from "./acp-client.js";
+import { formatDiff } from "./message-bridge.js";
 
 const KIND_LABELS: Record<string, string> = {
   allow_once: "\u2705 Allow",
@@ -32,10 +34,25 @@ export async function sendPermissionRequest(
   toolKind: string,
   options: PermissionOption[],
   requestorId: string,
+  diffs: DiffContent[] = [],
   timeoutMs = 14 * 60 * 1000,
-): Promise<{ outcome: "selected"; optionId: string } | { outcome: "cancelled" }> {
+): Promise<{ outcome: "selected"; optionId: string; diffsSent?: boolean } | { outcome: "cancelled"; diffsSent?: boolean }> {
   if (options.length === 0) {
     return { outcome: "cancelled" };
+  }
+
+  // Send diffs before the permission embed so the user can review changes
+  let diffsSent = false;
+  if (diffs.length > 0) {
+    try {
+      const diffMessages = formatDiff(diffs);
+      for (const msg of diffMessages) {
+        await channel.send(msg);
+      }
+      diffsSent = true;
+    } catch (err) {
+      console.error("Failed to send permission diffs:", err);
+    }
   }
 
   const embed = new EmbedBuilder()
@@ -69,13 +86,13 @@ export async function sendPermissionRequest(
       const optionId = interaction.customId.replace("perm_", "");
       await interaction.update({ components: [] });
       collector.stop("selected");
-      resolve({ outcome: "selected", optionId });
+      resolve({ outcome: "selected", optionId, diffsSent });
     });
 
     collector.on("end", (_collected, reason) => {
       if (reason === "time") {
         msg.edit({ components: [] }).catch(() => {});
-        resolve({ outcome: "cancelled" });
+        resolve({ outcome: "cancelled", diffsSent });
       }
     });
   });

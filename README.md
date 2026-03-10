@@ -9,7 +9,7 @@ Send a message in Discord, get AI coding assistance back — with tool call visu
 - **Slash commands & mentions** — `/ask <message>` or `@bot message`
 - **Real-time streaming** — agent responses stream into Discord with smart message splitting
 - **Tool call visualization** — see what the agent is doing with emoji status indicators
-- **Permission UI** — Discord buttons for approving/denying agent actions
+- **Permission UI** — Discord buttons for approving/denying agent actions, with file diffs shown inline for review before approval
 - **Multi-agent support** — different channels can use different agents
 - **Daemon mode** — runs in background with auto-start (systemd/launchd)
 - **Interactive setup** — guided `init` wizard for first-time configuration
