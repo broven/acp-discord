@@ -16,6 +16,17 @@
   "engines": {
     "node": ">=18"
   },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/broven/acp-discord.git"
+  },
+  "bugs": {
+    "url": "https://github.com/broven/acp-discord/issues"
+  },
+  "homepage": "https://github.com/broven/acp-discord#readme",
   "license": "MIT",
   "packageManager": "pnpm@10.14.0",
   "dependencies": {
