@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
-import { openSync } from "node:fs";
+import { openSync, closeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isDaemonRunning, readPid, removePid } from "./pid.js";
 import { enableAutostart, disableAutostart } from "./autostart.js";
@@ -38,12 +38,15 @@ export function makeDaemonCommand(): Command {
       });
 
       child.unref();
+      closeSync(outFd);
+      closeSync(errFd);
 
       // Wait briefly and verify the daemon wrote its PID file (#11)
       await new Promise((resolve) => setTimeout(resolve, 1500));
       if (isDaemonRunning(PID_PATH)) {
         const pid = readPid(PID_PATH);
         console.log(`Daemon started (PID: ${pid})`);
+        process.exit(0);
       } else {
         console.error(`Daemon failed to start (forked PID: ${child.pid}).`);
         console.error(`Check logs: ${ERR_LOG_PATH}`);
