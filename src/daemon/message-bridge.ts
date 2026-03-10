@@ -1,4 +1,8 @@
+import { createTwoFilesPatch } from "diff";
+import type { DiffContent } from "./acp-client.js";
+
 const DISCORD_MAX_LENGTH = 2000;
+const MAX_DIFF_LINES = 150;
 
 export function splitMessage(text: string, maxLength = DISCORD_MAX_LENGTH): string[] {
   if (text.length <= maxLength) return [text];
@@ -67,4 +71,48 @@ export function formatToolSummary(
     lines.push(`${STATUS_ICONS[tool.status]} ${tool.title}`);
   }
   return lines.join("\n");
+}
+
+export function formatDiff(diffs: DiffContent[], maxLines = MAX_DIFF_LINES): string[] {
+  if (diffs.length === 0) return [];
+
+  const parts: string[] = [];
+
+  for (const d of diffs) {
+    const fileName = d.path.split("/").pop() ?? d.path;
+    const oldText = d.oldText ?? "";
+    const patch = createTwoFilesPatch(
+      d.oldText == null ? "/dev/null" : d.path,
+      d.path,
+      oldText,
+      d.newText,
+      undefined,
+      undefined,
+      { context: 3 },
+    );
+
+    // Remove the first two header lines (Index: and ===) if present, keep ---/+++ and hunks
+    const patchLines = patch.split("\n");
+    // Find the first --- line to start from
+    const startIdx = patchLines.findIndex((l) => l.startsWith("---"));
+    const diffLines = startIdx >= 0 ? patchLines.slice(startIdx) : patchLines;
+
+    let truncated = false;
+    let displayLines = diffLines;
+    if (diffLines.length > maxLines) {
+      displayLines = diffLines.slice(0, maxLines);
+      truncated = true;
+    }
+
+    let block = `**${fileName}**\n\`\`\`diff\n${displayLines.join("\n")}\n\`\`\``;
+    if (truncated) {
+      block += `\n*... ${diffLines.length - maxLines} more lines*`;
+    }
+
+    parts.push(block);
+  }
+
+  // Join all diff blocks and split for Discord's message limit
+  const fullMessage = parts.join("\n\n");
+  return splitMessage(fullMessage);
 }
