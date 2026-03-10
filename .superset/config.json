@@ -1,0 +1,4 @@
+{
+  "setup": ["wt hook post-create --yes || true"],
+  "teardown": ["wt hook pre-remove --yes|| true"]
+}

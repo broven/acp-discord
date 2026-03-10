@@ -1,6 +1,9 @@
 # Worktrees
 .worktrees/
 
+# Local dev docs
+.local/
+
 # Logs
 logs
 *.log

@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "setup": "wt hook post-create --yes || true",
+    "run": "",
+    "archive": "wt hook pre-remove --yes || true"
+  }
+}

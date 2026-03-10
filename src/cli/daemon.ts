@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { fork } from "node:child_process";
+import { spawn } from "node:child_process";
 import { openSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isDaemonRunning, readPid, removePid } from "./pid.js";
@@ -26,12 +26,14 @@ export function makeDaemonCommand(): Command {
       }
       removePid(PID_PATH); // clean stale
 
-      const daemonEntry = fileURLToPath(new URL("../daemon.js", import.meta.url));
+      // In the bundled output, both index.js and daemon.js are in dist/
+      const thisDir = fileURLToPath(new URL(".", import.meta.url));
+      const daemonEntry = join(thisDir, "daemon.js");
       const outFd = openSync(LOG_PATH, "a");
       const errFd = openSync(ERR_LOG_PATH, "a");
-      const child = fork(daemonEntry, [], {
+      const child = spawn(process.execPath, [daemonEntry], {
         detached: true,
-        stdio: ["ignore", outFd, errFd, "ipc"],
+        stdio: ["ignore", outFd, errFd],
         env: { ...process.env, ACP_DISCORD_DAEMON: "1" },
       });
 
