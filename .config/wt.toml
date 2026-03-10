@@ -48,6 +48,7 @@ copy-local = """
 ROOT="${WT_ROOT:-${CONDUCTOR_ROOT_PATH:-${SUPERSET_ROOT_PATH}}}"
 cp -r "$ROOT/.local" .local 2>/dev/null || echo '.local not found, skipping'
 """
+install = "pnpm install"
 
 # Post-Start: Runs in BACKGROUND after worktree creation (parallel)
 # Use for: dev servers, file watchers, background builds
