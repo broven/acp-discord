@@ -64,13 +64,43 @@ const STATUS_ICONS: Record<ToolStatus, string> = {
 };
 
 export function formatToolSummary(
-  tools: Map<string, { title: string; status: ToolStatus }>,
+  tools: Map<string, { title: string; status: ToolStatus; rawInput?: Record<string, unknown> }>,
 ): string {
   const lines: string[] = [];
   for (const [, tool] of tools) {
-    lines.push(`${STATUS_ICONS[tool.status]} ${tool.title}`);
+    const detail = extractToolDetail(tool.rawInput);
+    const suffix = detail ? ` · \`${detail}\`` : "";
+    lines.push(`${STATUS_ICONS[tool.status]} ${tool.title}${suffix}`);
   }
   return lines.join("\n");
+}
+
+const MAX_DETAIL_LENGTH = 80;
+
+// Only display values from known-safe fields to avoid leaking secrets
+const SAFE_FIELDS = ["command", "file_path", "pattern", "query", "path", "url", "description"];
+
+function extractToolDetail(rawInput?: Record<string, unknown>): string | null {
+  if (!rawInput) return null;
+
+  for (const field of SAFE_FIELDS) {
+    if (typeof rawInput[field] === "string" && rawInput[field]) {
+      return truncate(sanitizeDetail(rawInput[field] as string), MAX_DETAIL_LENGTH);
+    }
+  }
+
+  return null;
+}
+
+function sanitizeDetail(text: string): string {
+  return text.replace(/`/g, "'");
+}
+
+function truncate(text: string, max: number): string {
+  // Use first line only for multiline values
+  const firstLine = text.split("\n")[0];
+  if (firstLine.length <= max) return firstLine;
+  return firstLine.slice(0, max - 1) + "\u2026";
 }
 
 export function formatDiff(diffs: DiffContent[], maxLines = MAX_DIFF_LINES): string[] {
