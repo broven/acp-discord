@@ -17,20 +17,13 @@ Send a message in Discord, get AI coding assistance back — with tool call visu
 ## Prerequisites
 
 - Node.js >= 18
-- pnpm
 - A Discord bot token ([create one here](https://discord.com/developers/applications))
-- An ACP-compatible agent (e.g. `claude-code --acp`)
+- **An ACP-compatible coding agent installed and working** — the `init` wizard uses an agent to help generate your config. For example, install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and verify it runs with `claude --version`.
 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Build
-pnpm build
-
-# Run the setup wizard
+# Run the setup wizard (interactive, agent-driven)
 npx acp-discord init
 
 # Start the daemon
