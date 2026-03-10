@@ -23,6 +23,7 @@ You need to collect:
 1. Discord Bot Token (guide them to https://discord.com/developers/applications if needed)
 2. Default working directory (the project path the agent will work on)
 3. Channel IDs to bind (explain how to get channel IDs: right-click channel → Copy Channel ID)
+4. Reply mode per channel: ask whether the bot should respond to ALL messages in the channel (auto_reply = true) or only when @mentioned (auto_reply = false, the default)
 
 Once you have all info, write the config file using the write_text_file tool to ${CONFIG_PATH}.
 
@@ -39,6 +40,7 @@ idle_timeout = 600
 
 [channels.<channel-id>]
 agent = "default"
+auto_reply = false  # true = respond to all messages; false = only @mentions
 \`\`\`
 
 Be friendly and concise. Ask one question at a time.`;

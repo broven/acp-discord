@@ -8,6 +8,7 @@ export interface AgentConfig {
 export interface ChannelConfig {
   agent: string;
   cwd?: string; // override agent's default cwd
+  auto_reply?: boolean; // respond to all messages, not just @mentions
 }
 
 export interface DiscordConfig {
@@ -23,4 +24,5 @@ export interface AppConfig {
 export interface ResolvedChannelConfig {
   channelId: string;
   agent: AgentConfig;
+  autoReply: boolean;
 }
