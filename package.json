@@ -4,8 +4,22 @@
   "description": "Discord bot that wraps ACP protocol for coding agents",
   "type": "module",
   "bin": {
-    "acp-discord": "./dist/index.js"
+    "acp-discord": "dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/broven/acp-discord.git"
+  },
+  "keywords": [
+    "discord",
+    "acp",
+    "agent",
+    "claude",
+    "coding-agent"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsup",
@@ -36,7 +50,9 @@
     "smol-toml": "^1.6.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "devDependencies": {
     "@types/node": "^25.3.5",
