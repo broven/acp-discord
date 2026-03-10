@@ -180,7 +180,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   discordClient.on(Events.ClientReady, async (c) => {
     console.log(`Discord bot ready: ${c.user.tag}`);
 
-    // Register /ask slash command
+    // Register slash commands
     const askCommand = new SlashCommandBuilder()
       .setName("ask")
       .setDescription("Ask the coding agent a question")
@@ -188,12 +188,16 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
         opt.setName("message").setDescription("Your message").setRequired(true),
       );
 
+    const clearCommand = new SlashCommandBuilder()
+      .setName("clear")
+      .setDescription("Clear the agent session and start fresh");
+
     const rest = new REST().setToken(config.discord.token);
     try {
       await rest.put(Routes.applicationCommands(c.application.id), {
-        body: [askCommand.toJSON()],
+        body: [askCommand.toJSON(), clearCommand.toJSON()],
       });
-      console.log("Registered /ask command");
+      console.log("Registered /ask and /clear commands");
     } catch (err) {
       console.error("Failed to register commands:", err);
     }
@@ -276,6 +280,26 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
       console.error(`Prompt failed for channel ${channelId}:`, err);
       await interaction.followUp({ content: "An error occurred while processing your request.", ephemeral: true }).catch(() => {});
     }
+  });
+
+  // Handle /clear command
+  discordClient.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== "clear") return;
+
+    const channelId = interaction.channelId;
+    sessionManager.teardown(channelId);
+
+    // Clean up display state
+    toolStates.delete(channelId);
+    toolSummaryMessages.delete(channelId);
+    replyBuffers.delete(channelId);
+    replyMessages.delete(channelId);
+    const timer = flushTimers.get(channelId);
+    if (timer) clearTimeout(timer);
+    flushTimers.delete(channelId);
+
+    await interaction.reply("Session cleared. Next message will start a fresh agent.");
   });
 
   // Graceful shutdown
