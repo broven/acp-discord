@@ -94,7 +94,7 @@ export function makeInitCommand(): Command {
 
           // Auto-allow only safe file writes within the config directory,
           // validated against actual tool locations (not spoofable title) (#2)
-          const isSafeWrite = kind === "write_text_file" || kind === "fs";
+          const isSafeWrite = kind === "write_text_file" || kind === "fs" || kind === "edit";
           if (isSafeWrite && params.toolCall.locations?.length) {
             const allPathsSafe = params.toolCall.locations.every(
               (loc: { path: string }) => {
@@ -176,6 +176,21 @@ export function makeInitCommand(): Command {
         ],
       });
 
+      // Check if config was already written during the initial prompt
+      if (existsSync(CONFIG_PATH)) {
+        try {
+          const content = readFileSync(CONFIG_PATH, "utf-8");
+          parseConfig(content);
+          console.log("\n\nSetup complete! Config written to", CONFIG_PATH);
+          console.log("Run `npx acp-discord daemon start` to begin.");
+          rl.close();
+          proc.kill();
+          process.exit(0);
+        } catch {
+          // config not valid yet, continue to interactive loop
+        }
+      }
+
       // Interactive loop
       while (true) {
         const input = await askUser("\n> ");
@@ -202,5 +217,6 @@ export function makeInitCommand(): Command {
 
       rl.close();
       proc.kill();
+      process.exit(0);
     });
 }
