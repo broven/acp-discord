@@ -84,20 +84,22 @@ export async function sendPermissionRequest(
       time: timeoutMs,
     });
 
+    const cleanup = () => {
+      for (const dm of diffMsgs) dm.delete().catch(() => {});
+      msg.delete().catch(() => msg.edit({ components: [] }).catch(() => {}));
+    };
+
     collector.on("collect", async (interaction) => {
       const optionId = interaction.customId.replace("perm_", "");
       await interaction.deferUpdate();
-      // Delete permission embed and diff messages to keep channel clean
-      for (const dm of diffMsgs) dm.delete().catch(() => {});
-      msg.delete().catch(() => {});
+      cleanup();
       collector.stop("selected");
       resolve({ outcome: "selected", optionId, diffsSent });
     });
 
     collector.on("end", (_collected, reason) => {
-      if (reason === "time") {
-        for (const dm of diffMsgs) dm.delete().catch(() => {});
-        msg.delete().catch(() => {});
+      if (reason !== "selected") {
+        cleanup();
         resolve({ outcome: "cancelled", diffsSent });
       }
     });
