@@ -22,7 +22,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   const router = new ChannelRouter(config);
 
   // Per-channel state for display
-  const toolStates = new Map<string, Map<string, { title: string; status: ToolStatus }>>();
+  const toolStates = new Map<string, Map<string, { title: string; status: ToolStatus; rawInput?: Record<string, unknown> }>>();
   const toolSummaryMessages = new Map<string, Message>();
   const replyBuffers = new Map<string, string>();
   const replyMessages = new Map<string, Message>();
@@ -33,9 +33,9 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   let discordClient: Client;
 
   const handlers: AcpEventHandlers = {
-    onToolCall(channelId, toolCallId, title, _kind, status, diffs) {
+    onToolCall(channelId, toolCallId, title, _kind, status, diffs, rawInput) {
       if (!toolStates.has(channelId)) toolStates.set(channelId, new Map());
-      toolStates.get(channelId)!.set(toolCallId, { title, status: status as ToolStatus });
+      toolStates.get(channelId)!.set(toolCallId, { title, status: status as ToolStatus, rawInput });
       accumulateDiffs(channelId, toolCallId, diffs);
       updateToolSummaryMessage(channelId);
       if (status === "completed") sendDiffsForTool(channelId, toolCallId);
@@ -100,7 +100,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
 
     const messages = formatDiff(diffs);
     for (const msg of messages) {
-      await channel.send(msg);
+      await channel.send({ content: msg, allowedMentions: { parse: [] as const } });
     }
 
     channelDiffs!.delete(toolCallId);
@@ -132,11 +132,12 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
         .setStyle(ButtonStyle.Secondary),
     );
 
+    const noMentions = { parse: [] as const };
     const existing = toolSummaryMessages.get(channelId);
     if (existing) {
-      await existing.edit({ content, components: [stopButton] }).catch(() => {});
+      await existing.edit({ content, components: [stopButton], allowedMentions: noMentions }).catch(() => {});
     } else {
-      const msg = await channel.send({ content, components: [stopButton] });
+      const msg = await channel.send({ content, components: [stopButton], allowedMentions: noMentions });
       toolSummaryMessages.set(channelId, msg);
     }
   }
@@ -146,7 +147,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     if (msg) {
       const tools = toolStates.get(channelId);
       const content = tools ? formatToolSummary(tools) : msg.content;
-      await msg.edit({ content, components: [] }).catch(() => {});
+      await msg.edit({ content, components: [], allowedMentions: { parse: [] as const } }).catch(() => {});
     }
   }
 
