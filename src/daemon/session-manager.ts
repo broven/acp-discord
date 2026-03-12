@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import type { AgentConfig } from "../shared/types.js";
@@ -13,6 +15,7 @@ export interface McpServerConfig {
 
 interface ManagedSession {
   channelId: string;
+  agentName: string;
   process: ChildProcess;
   connection: ClientSideConnection;
   sessionId: string;
@@ -24,17 +27,67 @@ interface ManagedSession {
   activePromptRequestorId: string;
 }
 
+interface PersistedSession {
+  sessionId: string;
+  agentName: string;
+}
+
 export class SessionManager {
   private sessions = new Map<string, ManagedSession>();
   private handlers: AcpEventHandlers;
+  private sessionsPath: string;
+  private pendingResumes = new Map<string, PersistedSession>();
 
-  constructor(handlers: AcpEventHandlers) {
+  constructor(handlers: AcpEventHandlers, sessionsPath: string) {
     this.handlers = handlers;
+    this.sessionsPath = sessionsPath;
+    this.loadSessionMap();
   }
 
-  async prompt(channelId: string, text: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<string> {
+  private loadSessionMap(): void {
+    try {
+      const data = readFileSync(this.sessionsPath, "utf-8");
+      const map = JSON.parse(data) as Record<string, PersistedSession>;
+      for (const [channelId, entry] of Object.entries(map)) {
+        this.pendingResumes.set(channelId, entry);
+      }
+      if (this.pendingResumes.size > 0) {
+        console.log(`Loaded ${this.pendingResumes.size} session(s) for lazy resume`);
+      }
+    } catch (err: unknown) {
+      // ENOENT is expected on first run; log other errors for diagnosability
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (err instanceof SyntaxError) {
+        console.warn("Corrupt sessions.json, starting fresh:", err.message);
+      }
+    }
+  }
+
+  saveSessionMap(): void {
+    const map: Record<string, PersistedSession> = {};
+    // Include unresumed pending sessions so they survive daemon restarts
+    // where no messages were received for that channel
+    for (const [channelId, entry] of this.pendingResumes) {
+      map[channelId] = entry;
+    }
+    // Active sessions override any pending resume for the same channel
+    for (const [channelId, session] of this.sessions) {
+      map[channelId] = {
+        sessionId: session.sessionId,
+        agentName: session.agentName,
+      };
+    }
+    try {
+      mkdirSync(dirname(this.sessionsPath), { recursive: true });
+      writeFileSync(this.sessionsPath, JSON.stringify(map, null, 2));
+    } catch (err) {
+      console.error("Failed to save session map:", err);
+    }
+  }
+
+  async prompt(channelId: string, text: string, agentName: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<string> {
     console.log(`[MCP] prompt: channel=${channelId} mcpServers=${mcpServers ? `[${mcpServers.length} server(s)]` : "undefined"}`);
-    const session = await this.getOrCreate(channelId, agentConfig, requestorId, mcpServers);
+    const session = await this.getOrCreate(channelId, agentName, agentConfig, requestorId, mcpServers);
     session.lastActivity = Date.now();
     this.resetIdleTimer(session, agentConfig.idle_timeout);
 
@@ -75,17 +128,33 @@ export class SessionManager {
     }
   }
 
-  private async getOrCreate(channelId: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
+  private async getOrCreate(channelId: string, agentName: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
     const existing = this.sessions.get(channelId);
     if (existing) {
       console.log(`[MCP] getOrCreate: reusing existing session for channel=${channelId} (mcpServers passed but ignored: ${mcpServers ? mcpServers.length : 0} server(s))`);
       return existing;
     }
+
+    // Check for a pending resume from a previous daemon run
+    const pending = this.pendingResumes.get(channelId);
+    if (pending && pending.agentName === agentName) {
+      this.pendingResumes.delete(channelId);
+      try {
+        return await this.resumeSession(channelId, agentName, agentConfig, requestorId, pending.sessionId, mcpServers);
+      } catch (err) {
+        console.warn(`Session resume failed for channel ${channelId}, creating new session:`, err);
+        // Fall through to create a new session
+      }
+    } else if (pending) {
+      // Agent name changed since last run — discard stale resume
+      this.pendingResumes.delete(channelId);
+    }
+
     console.log(`[MCP] getOrCreate: creating new session for channel=${channelId} with ${mcpServers?.length ?? 0} MCP server(s)`);
-    return this.createSession(channelId, agentConfig, requestorId, mcpServers);
+    return this.createSession(channelId, agentName, agentConfig, requestorId, mcpServers);
   }
 
-  private async createSession(channelId: string, config: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
+  private async createSession(channelId: string, agentName: string, config: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
     const proc = spawn(config.command, config.args, {
       stdio: ["pipe", "pipe", "inherit"],
       cwd: config.cwd,
@@ -158,6 +227,95 @@ export class SessionManager {
 
     const managed: ManagedSession = {
       channelId,
+      agentName,
+      process: proc,
+      connection,
+      sessionId,
+      lastActivity: Date.now(),
+      idleTimer: this.startIdleTimer(channelId, config.idle_timeout),
+      prompting: false,
+      queue: [],
+      activePromptRequestorId: requestorId,
+    };
+
+    this.sessions.set(channelId, managed);
+    return managed;
+  }
+
+  private async resumeSession(channelId: string, agentName: string, config: AgentConfig, requestorId: string, previousSessionId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
+    const proc = spawn(config.command, config.args, {
+      stdio: ["pipe", "pipe", "inherit"],
+      cwd: config.cwd,
+    });
+
+    proc.on("error", (err) => {
+      console.error(`Agent process error for channel ${channelId}:`, err);
+      const session = this.sessions.get(channelId);
+      if (session?.process === proc) {
+        clearTimeout(session.idleTimer);
+        this.sessions.delete(channelId);
+      }
+    });
+
+    proc.on("exit", (code) => {
+      const session = this.sessions.get(channelId);
+      if (session?.process === proc) {
+        clearTimeout(session.idleTimer);
+        this.sessions.delete(channelId);
+        if (code !== 0 && code !== null) {
+          console.warn(`Agent process for channel ${channelId} exited with code ${code}`);
+        }
+      }
+    });
+
+    let connection: ClientSideConnection;
+    let sessionId: string;
+    try {
+      const stream = ndJsonStream(
+        Writable.toWeb(proc.stdin!) as WritableStream<Uint8Array>,
+        Readable.toWeb(proc.stdout!) as ReadableStream<Uint8Array>,
+      );
+
+      const client = createAcpClient(channelId, this.handlers, () => {
+        return this.sessions.get(channelId)?.activePromptRequestorId ?? requestorId;
+      });
+      connection = new ClientSideConnection((_agent) => client, stream);
+
+      const initResult = await connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
+          terminal: true,
+        },
+        clientInfo: {
+          name: "acp-discord",
+          title: "ACP Discord Bot",
+          version: "0.1.0",
+        },
+      });
+
+      // Check if agent supports session resume
+      const supportsResume = !!initResult.agentCapabilities?.sessionCapabilities?.resume;
+      if (!supportsResume) {
+        proc.kill();
+        throw new Error("Agent does not support session resume");
+      }
+
+      await connection.unstable_resumeSession({
+        sessionId: previousSessionId,
+        cwd: config.cwd,
+        mcpServers: mcpServers ?? [],
+      });
+      sessionId = previousSessionId;
+      console.log(`Resumed session ${sessionId} for channel ${channelId}`);
+    } catch (err) {
+      proc.kill();
+      throw err;
+    }
+
+    const managed: ManagedSession = {
+      channelId,
+      agentName,
       process: proc,
       connection,
       sessionId,
@@ -182,6 +340,7 @@ export class SessionManager {
   }
 
   teardown(channelId: string): void {
+    this.pendingResumes.delete(channelId);
     const session = this.sessions.get(channelId);
     if (!session) return;
     clearTimeout(session.idleTimer);
@@ -190,6 +349,7 @@ export class SessionManager {
   }
 
   teardownAll(): void {
+    this.saveSessionMap();
     for (const channelId of this.sessions.keys()) {
       this.teardown(channelId);
     }

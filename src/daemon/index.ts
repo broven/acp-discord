@@ -7,6 +7,7 @@ import { startDiscordBot } from "./discord-bot.js";
 const CONFIG_DIR = join(homedir(), ".acp-discord");
 const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
 const PID_PATH = join(CONFIG_DIR, "daemon.pid");
+const SESSIONS_PATH = join(CONFIG_DIR, "sessions.json");
 
 export async function runDaemon(): Promise<void> {
   // Global error handlers — graceful shutdown on fatal errors, continue on rejections
@@ -30,7 +31,7 @@ export async function runDaemon(): Promise<void> {
   console.log(`acp-discord daemon started (PID: ${process.pid})`);
   console.log(`Loaded config: ${Object.keys(config.channels).length} channel(s)`);
 
-  await startDiscordBot(config);
+  await startDiscordBot(config, SESSIONS_PATH);
 }
 
 if (process.env.ACP_DISCORD_DAEMON === "1") {

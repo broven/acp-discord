@@ -23,7 +23,7 @@ import { splitMessage, formatToolSummary, formatDiff, type ToolStatus } from "./
 import type { AcpEventHandlers, DiffContent } from "./acp-client.js";
 import { IpcServer, DEFAULT_IPC_SOCKET_PATH } from "./ipc-server.js";
 
-export async function startDiscordBot(config: AppConfig): Promise<void> {
+export async function startDiscordBot(config: AppConfig, sessionsPath: string): Promise<void> {
   const router = new ChannelRouter(config);
 
   // Per-channel state for display
@@ -161,7 +161,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     },
   };
 
-  const sessionManager = new SessionManager(handlers);
+  const sessionManager = new SessionManager(handlers, sessionsPath);
 
   // --- MCP server config builder ---
 
@@ -342,7 +342,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
 
   async function promptWithMcp(channelId: string, text: string, agentName: string, guildId: string | null, agentConfig: typeof config.agents[string], requestorId: string): Promise<void> {
     const mcpServers = guildId ? buildMcpServers(channelId, agentName, guildId) : undefined;
-    await sessionManager.prompt(channelId, text, agentConfig, requestorId, mcpServers);
+    await sessionManager.prompt(channelId, text, agentName, agentConfig, requestorId, mcpServers);
   }
 
   // --- Discord client setup ---
