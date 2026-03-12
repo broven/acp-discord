@@ -84,6 +84,16 @@ WantedBy=default.target
   }
 }
 
+export function isAutostartEnabled(): boolean {
+  const os = platform();
+  if (os === "linux") {
+    return existsSync(join(SYSTEMD_DIR, SYSTEMD_SERVICE));
+  } else if (os === "darwin") {
+    return existsSync(join(LAUNCHD_DIR, LAUNCHD_PLIST));
+  }
+  return false;
+}
+
 export function disableAutostart(): void {
   const os = platform();
 
