@@ -13,6 +13,7 @@ import {
   type TextChannel,
 } from "discord.js";
 import { resolve as resolvePath, dirname } from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { AppConfig } from "../shared/types.js";
 import { ChannelRouter } from "./channel-router.js";
@@ -166,14 +167,26 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
 
   function buildMcpServers(channelId: string, agentName: string, guildId: string): McpServerConfig[] {
     const resolved = router.resolve(channelId);
-    if (!resolved?.agent.discord_tools) return [];
+    const discordToolsEnabled = resolved?.agent.discord_tools ?? false;
+    console.log(`[MCP] buildMcpServers: channel=${channelId} agent=${agentName} discord_tools=${discordToolsEnabled}`);
+
+    if (!discordToolsEnabled) {
+      console.log(`[MCP] buildMcpServers: discord_tools is falsy, returning empty array`);
+      return [];
+    }
 
     // Resolve the built MCP server script path relative to this package
     // import.meta.dirname is available in Node 21.2+; fall back to fileURLToPath for Node 18
     const currentDir = import.meta.dirname ?? dirname(fileURLToPath(import.meta.url));
     const mcpScriptPath = resolvePath(currentDir, "mcp-discord-channels.js");
+    const scriptExists = existsSync(mcpScriptPath);
 
-    return [
+    console.log(`[MCP] buildMcpServers: mcpScriptPath=${mcpScriptPath} exists=${scriptExists}`);
+    if (!scriptExists) {
+      console.warn(`[MCP] WARNING: MCP script not found at ${mcpScriptPath} — Discord tools will not work`);
+    }
+
+    const mcpConfig: McpServerConfig[] = [
       {
         name: "discord-channels",
         command: "node",
@@ -187,6 +200,9 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
         ],
       },
     ];
+
+    console.log(`[MCP] buildMcpServers: returning ${mcpConfig.length} MCP server(s):`, JSON.stringify(mcpConfig.map(s => ({ name: s.name, command: s.command, args: s.args }))));
+    return mcpConfig;
   }
 
   // --- Display helpers ---

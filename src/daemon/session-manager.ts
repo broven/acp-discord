@@ -33,6 +33,7 @@ export class SessionManager {
   }
 
   async prompt(channelId: string, text: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<string> {
+    console.log(`[MCP] prompt: channel=${channelId} mcpServers=${mcpServers ? `[${mcpServers.length} server(s)]` : "undefined"}`);
     const session = await this.getOrCreate(channelId, agentConfig, requestorId, mcpServers);
     session.lastActivity = Date.now();
     this.resetIdleTimer(session, agentConfig.idle_timeout);
@@ -76,7 +77,11 @@ export class SessionManager {
 
   private async getOrCreate(channelId: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
     const existing = this.sessions.get(channelId);
-    if (existing) return existing;
+    if (existing) {
+      console.log(`[MCP] getOrCreate: reusing existing session for channel=${channelId} (mcpServers passed but ignored: ${mcpServers ? mcpServers.length : 0} server(s))`);
+      return existing;
+    }
+    console.log(`[MCP] getOrCreate: creating new session for channel=${channelId} with ${mcpServers?.length ?? 0} MCP server(s)`);
     return this.createSession(channelId, agentConfig, requestorId, mcpServers);
   }
 
@@ -134,11 +139,18 @@ export class SessionManager {
         },
       });
 
-      const result = await connection.newSession({
+      const newSessionPayload = {
         cwd: config.cwd,
         mcpServers: mcpServers ?? [],
-      });
+      };
+      console.log(`[MCP] createSession: calling newSession for channel=${channelId}`, JSON.stringify({
+        cwd: newSessionPayload.cwd,
+        mcpServerCount: newSessionPayload.mcpServers.length,
+        mcpServerNames: newSessionPayload.mcpServers.map(s => s.name),
+      }));
+      const result = await connection.newSession(newSessionPayload);
       sessionId = result.sessionId;
+      console.log(`[MCP] createSession: newSession succeeded, sessionId=${sessionId}`);
     } catch (err) {
       proc.kill();
       throw err;
