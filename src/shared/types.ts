@@ -3,6 +3,7 @@ export interface AgentConfig {
   args: string[];
   cwd: string;
   idle_timeout: number;
+  discord_tools: boolean;
 }
 
 export interface ChannelConfig {
@@ -23,6 +24,7 @@ export interface AppConfig {
 
 export interface ResolvedChannelConfig {
   channelId: string;
+  agentName: string;
   agent: AgentConfig;
   autoReply: boolean;
 }

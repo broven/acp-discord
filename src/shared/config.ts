@@ -44,11 +44,17 @@ export function parseConfig(toml: string): AppConfig {
       throw new Error(`agents.${name}.cwd must be a string`);
     }
 
+    // Validate discord_tools is a boolean if provided
+    if (agent.discord_tools !== undefined && typeof agent.discord_tools !== "boolean") {
+      throw new Error(`agents.${name}.discord_tools must be a boolean`);
+    }
+
     parsedAgents[name] = {
       command: agent.command,
       args: (agent.args as string[]) ?? [],
       cwd: typeof agent.cwd === "string" ? agent.cwd : process.cwd(),
       idle_timeout: typeof agent.idle_timeout === "number" ? agent.idle_timeout : 600,
+      discord_tools: agent.discord_tools === true,
     };
   }
 
@@ -100,6 +106,7 @@ export function resolveChannelConfig(
 
   return {
     channelId,
+    agentName: channelConf.agent,
     agent: {
       ...agentConf,
       cwd: channelConf.cwd ?? agentConf.cwd,

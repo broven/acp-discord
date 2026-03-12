@@ -8,15 +8,19 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  EmbedBuilder,
   type Message,
   type TextChannel,
 } from "discord.js";
+import { resolve as resolvePath, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AppConfig } from "../shared/types.js";
 import { ChannelRouter } from "./channel-router.js";
-import { SessionManager } from "./session-manager.js";
+import { SessionManager, type McpServerConfig } from "./session-manager.js";
 import { sendPermissionRequest } from "./permission-ui.js";
 import { splitMessage, formatToolSummary, formatDiff, type ToolStatus } from "./message-bridge.js";
 import type { AcpEventHandlers, DiffContent } from "./acp-client.js";
+import { IpcServer, DEFAULT_IPC_SOCKET_PATH } from "./ipc-server.js";
 
 export async function startDiscordBot(config: AppConfig): Promise<void> {
   const router = new ChannelRouter(config);
@@ -33,6 +37,75 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   const permissionDiffShown = new Map<string, Set<string>>();
 
   let discordClient: Client;
+
+  // --- Confirmation UI for MCP tool actions ---
+
+  // Pending confirmation requests from MCP servers (requestId -> { resolver, allowedUserId })
+  const pendingConfirmations = new Map<string, { resolve: (approved: boolean) => void; allowedUserId: string | null }>();
+
+  async function handleConfirmAction(sourceChannelId: string, description: string, details: string): Promise<boolean> {
+    const channel = await fetchChannel(sourceChannelId);
+    if (!channel) return false;
+
+    // Only the user who triggered the current prompt can approve
+    const allowedUserId = sessionManager.getActiveRequestorId(sourceChannelId);
+
+    const requestId = `mcp_confirm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const embed = new EmbedBuilder()
+      .setColor(0xffa500)
+      .setTitle(`Channel Action: ${description}`)
+      .setDescription(details || "No additional details")
+      .setTimestamp();
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`mcp_approve_${requestId}`)
+        .setLabel("\u2705 Approve")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`mcp_reject_${requestId}`)
+        .setLabel("\u274C Reject")
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    const msg = await channel.send({ embeds: [embed], components: [row] });
+
+    return new Promise<boolean>((resolve) => {
+      const timeout = setTimeout(() => {
+        pendingConfirmations.delete(requestId);
+        msg.delete().catch(() => msg.edit({ components: [] }).catch(() => {}));
+        resolve(false);
+      }, 5 * 60 * 1000); // 5 minute timeout
+
+      pendingConfirmations.set(requestId, {
+        resolve: (approved: boolean) => {
+          clearTimeout(timeout);
+          pendingConfirmations.delete(requestId);
+          msg.delete().catch(() => msg.edit({ components: [] }).catch(() => {}));
+          resolve(approved);
+        },
+        allowedUserId,
+      });
+    });
+  }
+
+  // --- IPC Server ---
+
+  const ipcServer = new IpcServer(
+    {
+      registerChannel(channelId, agentName, autoReply) {
+        router.registerDynamic(channelId, agentName, autoReply);
+        console.log(`IPC: registered dynamic channel ${channelId} -> agent ${agentName}`);
+      },
+      unregisterChannel(channelId) {
+        router.unregisterDynamic(channelId);
+        console.log(`IPC: unregistered dynamic channel ${channelId}`);
+      },
+      confirmAction: handleConfirmAction,
+    },
+    DEFAULT_IPC_SOCKET_PATH,
+  );
 
   const handlers: AcpEventHandlers = {
     onToolCall(channelId, toolCallId, title, _kind, status, diffs, rawInput) {
@@ -88,6 +161,33 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
   };
 
   const sessionManager = new SessionManager(handlers);
+
+  // --- MCP server config builder ---
+
+  function buildMcpServers(channelId: string, agentName: string, guildId: string): McpServerConfig[] {
+    const resolved = router.resolve(channelId);
+    if (!resolved?.agent.discord_tools) return [];
+
+    // Resolve the built MCP server script path relative to this package
+    // import.meta.dirname is available in Node 21.2+; fall back to fileURLToPath for Node 18
+    const currentDir = import.meta.dirname ?? dirname(fileURLToPath(import.meta.url));
+    const mcpScriptPath = resolvePath(currentDir, "mcp-discord-channels.js");
+
+    return [
+      {
+        name: "discord-channels",
+        command: "node",
+        args: [mcpScriptPath],
+        env: [
+          { name: "DISCORD_TOKEN", value: config.discord.token },
+          { name: "GUILD_ID", value: guildId },
+          { name: "IPC_SOCKET_PATH", value: DEFAULT_IPC_SOCKET_PATH },
+          { name: "AGENT_NAME", value: agentName },
+          { name: "SOURCE_CHANNEL_ID", value: channelId },
+        ],
+      },
+    ];
+  }
 
   // --- Display helpers ---
 
@@ -216,6 +316,19 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     }
   }
 
+  // --- Helper: resolve guild ID from a channel ---
+
+  function getGuildId(message: Message): string | null {
+    return message.guildId ?? null;
+  }
+
+  // --- Helper: prompt with MCP servers ---
+
+  async function promptWithMcp(channelId: string, text: string, agentName: string, guildId: string | null, agentConfig: typeof config.agents[string], requestorId: string): Promise<void> {
+    const mcpServers = guildId ? buildMcpServers(channelId, agentName, guildId) : undefined;
+    await sessionManager.prompt(channelId, text, agentConfig, requestorId, mcpServers);
+  }
+
   // --- Discord client setup ---
 
   discordClient = new Client({
@@ -292,14 +405,14 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     }
 
     try {
-      await sessionManager.prompt(channelId, text, resolved.agent, message.author.id);
+      await promptWithMcp(channelId, text, resolved.agentName, getGuildId(message), resolved.agent, message.author.id);
     } catch (err) {
       console.error(`Prompt failed for channel ${channelId}:`, err);
       await message.reply("An error occurred while processing your request.").catch(() => {});
     }
   });
 
-  // Handle stop button clicks
+  // Handle stop button clicks and MCP confirmation buttons
   discordClient.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
 
@@ -315,6 +428,24 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
 
       sessionManager.cancel(channelId);
       await interaction.update({ components: [] });
+    }
+
+    // Handle MCP confirmation buttons
+    if (interaction.customId.startsWith("mcp_approve_") || interaction.customId.startsWith("mcp_reject_")) {
+      const approved = interaction.customId.startsWith("mcp_approve_");
+      const requestId = interaction.customId.replace(/^mcp_(approve|reject)_/, "");
+      const pending = pendingConfirmations.get(requestId);
+      if (pending) {
+        // Only the user who triggered the prompt can approve/reject
+        if (pending.allowedUserId && interaction.user.id !== pending.allowedUserId) {
+          await interaction.reply({ content: "Only the user who started this prompt can approve or reject.", ephemeral: true });
+          return;
+        }
+        await interaction.deferUpdate();
+        pending.resolve(approved);
+      } else {
+        await interaction.reply({ content: "This confirmation has expired.", ephemeral: true });
+      }
     }
   });
 
@@ -340,7 +471,8 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     }
 
     try {
-      await sessionManager.prompt(channelId, text, resolved.agent, interaction.user.id);
+      const guildId = interaction.guildId ?? null;
+      await promptWithMcp(channelId, text, resolved.agentName, guildId, resolved.agent, interaction.user.id);
     } catch (err) {
       console.error(`Prompt failed for channel ${channelId}:`, err);
       await interaction.followUp({ content: "An error occurred while processing your request.", ephemeral: true }).catch(() => {});
@@ -369,13 +501,18 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     await interaction.reply("Session cleared. Next message will start a fresh agent.");
   });
 
+  // --- Start IPC server ---
+  await ipcServer.start();
+
   // Graceful shutdown
   process.on("SIGTERM", () => {
+    ipcServer.stop();
     sessionManager.teardownAll();
     discordClient.destroy();
   });
 
   process.on("SIGINT", () => {
+    ipcServer.stop();
     sessionManager.teardownAll();
     discordClient.destroy();
   });
@@ -392,6 +529,7 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     } else {
       console.error("Error: Failed to connect to Discord:", message);
     }
+    ipcServer.stop();
     process.exit(1);
   }
 }

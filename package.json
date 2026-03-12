@@ -30,13 +30,6 @@
   "engines": {
     "node": ">=18"
   },
-  "files": [
-    "dist"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/broven/acp-discord.git"
-  },
   "bugs": {
     "url": "https://github.com/broven/acp-discord/issues"
   },
@@ -45,10 +38,12 @@
   "packageManager": "pnpm@10.14.0",
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.15.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "commander": "^14.0.3",
     "diff": "^8.0.3",
     "discord.js": "^14.25.1",
-    "smol-toml": "^1.6.0"
+    "smol-toml": "^1.6.0",
+    "zod": "^4.3.6"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
