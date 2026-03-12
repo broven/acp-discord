@@ -68,7 +68,7 @@ export function formatToolSummary(
 ): string {
   const lines: string[] = [];
   for (const [, tool] of tools) {
-    const detail = extractToolDetail(tool.rawInput);
+    const detail = extractToolDetail(tool.rawInput) ?? extractDetailFromTitle(tool.title);
     const suffix = detail ? ` · \`${detail}\`` : "";
     lines.push(`${STATUS_ICONS[tool.status]} ${tool.title}${suffix}`);
   }
@@ -80,12 +80,57 @@ const MAX_DETAIL_LENGTH = 80;
 // Only display values from known-safe fields to avoid leaking secrets
 const SAFE_FIELDS = ["command", "file_path", "pattern", "query", "path", "url", "description"];
 
+// Substrings that mark a field as sensitive — matches "secret_key", "api_key", "access_token", etc.
+const BLOCKED_SUBSTRINGS = ["token", "secret", "password", "key", "content", "new_string", "old_string", "credential", "auth"];
+
+function isBlockedField(name: string): boolean {
+  const lower = name.toLowerCase();
+  return BLOCKED_SUBSTRINGS.some((sub) => lower.includes(sub));
+}
+
 function extractToolDetail(rawInput?: Record<string, unknown>): string | null {
   if (!rawInput) return null;
 
+  // Try known safe fields first
   for (const field of SAFE_FIELDS) {
     if (typeof rawInput[field] === "string" && rawInput[field]) {
       return truncate(sanitizeDetail(rawInput[field] as string), MAX_DETAIL_LENGTH);
+    }
+  }
+
+  // Fallback: pick the first short string value from non-blocked fields
+  for (const [fieldName, value] of Object.entries(rawInput)) {
+    if (isBlockedField(fieldName)) continue;
+    if (SAFE_FIELDS.includes(fieldName)) continue; // already checked
+    if (typeof value === "string" && value.length > 0 && value.length < 100) {
+      return truncate(sanitizeDetail(value), MAX_DETAIL_LENGTH);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract useful detail from the tool title when rawInput is unavailable.
+ * Titles often look like "Read /path/to/file" or "Bash: ls -la" —
+ * we extract the part after the first space or colon.
+ */
+function extractDetailFromTitle(title: string): string | null {
+  if (!title) return null;
+
+  // Pattern: "ToolName /path/or/arg" or "ToolName: something"
+  const colonMatch = title.match(/^[^:]+:\s*(.+)/);
+  if (colonMatch) {
+    return truncate(sanitizeDetail(colonMatch[1].trim()), MAX_DETAIL_LENGTH);
+  }
+
+  // Pattern: "ToolName /some/path" — extract if second part looks like a path or command
+  const spaceIdx = title.indexOf(" ");
+  if (spaceIdx > 0 && spaceIdx < title.length - 1) {
+    const rest = title.slice(spaceIdx + 1).trim();
+    // Only extract if it looks like a path, URL, or meaningful argument
+    if (rest.startsWith("/") || rest.startsWith("./") || rest.startsWith("http") || rest.includes(".")) {
+      return truncate(sanitizeDetail(rest), MAX_DETAIL_LENGTH);
     }
   }
 

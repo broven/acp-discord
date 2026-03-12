@@ -65,6 +65,8 @@ export function createAcpClient(
           break;
         }
         case "tool_call": {
+          const rawKeys = (update as Record<string, unknown>).rawInput;
+          console.log(`[DEBUG tool_call] toolCallId=${update.toolCallId} title=${update.title} rawInputKeys=${rawKeys && typeof rawKeys === "object" ? Object.keys(rawKeys).join(",") : String(rawKeys)} updateKeys=${Object.keys(update).join(",")}`);
           const toolCallDiffs = extractDiffs(update.content);
           const rawVal = (update as Record<string, unknown>).rawInput;
           const rawInput = typeof rawVal === "object" && rawVal !== null && !Array.isArray(rawVal)
@@ -82,6 +84,8 @@ export function createAcpClient(
           break;
         }
         case "tool_call_update": {
+          const updateRawKeys = (update as Record<string, unknown>).rawInput;
+          console.log(`[DEBUG tool_call_update] toolCallId=${update.toolCallId} rawInputKeys=${updateRawKeys && typeof updateRawKeys === "object" ? Object.keys(updateRawKeys).join(",") : String(updateRawKeys)} updateKeys=${Object.keys(update).join(",")}`);
           const updateDiffs = extractDiffs(update.content);
           const updateRawVal = (update as Record<string, unknown>).rawInput;
           const updateRawInput = typeof updateRawVal === "object" && updateRawVal !== null && !Array.isArray(updateRawVal)

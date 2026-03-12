@@ -37,6 +37,38 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string): 
   // channelId -> Set of toolCallIds whose diffs were already shown at permission-request time
   const permissionDiffShown = new Map<string, Set<string>>();
 
+  // Typing indicator state: channelId -> interval timer
+  const typingIntervals = new Map<string, NodeJS.Timeout>();
+
+  function startTyping(channelId: string) {
+    if (typingIntervals.has(channelId)) return;
+    // Set a placeholder immediately to prevent concurrent calls from creating duplicate intervals
+    const placeholder = setTimeout(() => {}, 0);
+    typingIntervals.set(channelId, placeholder);
+    clearTimeout(placeholder);
+
+    fetchChannel(channelId).then((channel) => {
+      if (!channel) { typingIntervals.delete(channelId); return; }
+      // Re-check: stopTyping may have been called while we awaited
+      if (!typingIntervals.has(channelId)) return;
+      channel.sendTyping().catch(() => {});
+      const interval = setInterval(() => {
+        channel.sendTyping().catch(() => {});
+      }, 8000);
+      typingIntervals.set(channelId, interval);
+    }).catch(() => {
+      typingIntervals.delete(channelId);
+    });
+  }
+
+  function stopTyping(channelId: string) {
+    const interval = typingIntervals.get(channelId);
+    if (interval) {
+      clearInterval(interval);
+      typingIntervals.delete(channelId);
+    }
+  }
+
   let discordClient: Client;
 
   // --- Confirmation UI for MCP tool actions ---
@@ -130,6 +162,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string): 
     },
 
     onAgentMessageChunk(channelId, text) {
+      startTyping(channelId);
       const current = replyBuffers.get(channelId) ?? "";
       replyBuffers.set(channelId, current + text);
       scheduleFlushReply(channelId);
@@ -147,6 +180,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string): 
     },
 
     onPromptComplete(channelId, _stopReason) {
+      stopTyping(channelId);
       // Final flush
       flushReply(channelId, true);
       // Remove stop button from tool summary
@@ -423,6 +457,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string): 
     try {
       await promptWithMcp(channelId, text, resolved.agentName, getGuildId(message), resolved.agent, message.author.id);
     } catch (err) {
+      stopTyping(channelId);
       console.error(`Prompt failed for channel ${channelId}:`, err);
       await message.reply("An error occurred while processing your request.").catch(() => {});
     }
@@ -490,6 +525,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string): 
       const guildId = interaction.guildId ?? null;
       await promptWithMcp(channelId, text, resolved.agentName, guildId, resolved.agent, interaction.user.id);
     } catch (err) {
+      stopTyping(channelId);
       console.error(`Prompt failed for channel ${channelId}:`, err);
       await interaction.followUp({ content: "An error occurred while processing your request.", ephemeral: true }).catch(() => {});
     }
@@ -504,6 +540,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string): 
     sessionManager.teardown(channelId);
 
     // Clean up display state
+    stopTyping(channelId);
     toolStates.delete(channelId);
     toolSummaryMessages.delete(channelId);
     replyBuffers.delete(channelId);
@@ -522,12 +559,14 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string): 
 
   // Graceful shutdown
   process.on("SIGTERM", () => {
+    for (const channelId of typingIntervals.keys()) stopTyping(channelId);
     ipcServer.stop();
     sessionManager.teardownAll();
     discordClient.destroy();
   });
 
   process.on("SIGINT", () => {
+    for (const channelId of typingIntervals.keys()) stopTyping(channelId);
     ipcServer.stop();
     sessionManager.teardownAll();
     discordClient.destroy();
