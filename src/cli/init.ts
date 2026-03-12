@@ -8,8 +8,7 @@ import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclie
 import type { Client } from "@agentclientprotocol/sdk";
 import { detectInstalledAgents } from "../shared/detect-agents.js";
 import { parseConfig } from "../shared/config.js";
-
-declare const __VERSION__: string;
+import { getVersion } from "../shared/version.js";
 
 const CONFIG_DIR = join(homedir(), ".acp-discord");
 const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
@@ -161,7 +160,7 @@ export function makeInitCommand(): Command {
           fs: { readTextFile: true, writeTextFile: true },
           terminal: false,
         },
-        clientInfo: { name: "acp-discord-init", title: "ACP Discord Init", version: __VERSION__ },
+        clientInfo: { name: "acp-discord-init", title: "ACP Discord Init", version: getVersion() },
       });
 
       mkdirSync(CONFIG_DIR, { recursive: true });

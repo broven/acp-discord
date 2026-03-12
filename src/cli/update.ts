@@ -4,8 +4,7 @@ import { homedir, platform } from "node:os";
 import { execFileSync, execSync } from "node:child_process";
 import { isDaemonRunning, readPid, removePid } from "./pid.js";
 import { isAutostartEnabled, enableAutostart } from "./autostart.js";
-
-declare const __VERSION__: string;
+import { getVersion } from "../shared/version.js";
 
 const CONFIG_DIR = join(homedir(), ".acp-discord");
 const PID_PATH = join(CONFIG_DIR, "daemon.pid");
@@ -33,7 +32,7 @@ export function makeUpdateCommand(): Command {
   return new Command("update")
     .description("Update acp-discord to the latest version")
     .action(async () => {
-      const current = __VERSION__;
+      const current = getVersion();
 
       console.log(`Current version: v${current}`);
       console.log("Checking for updates...");
