@@ -28,6 +28,42 @@ function stopDaemon(): void {
   }
 }
 
+function restartViaServiceManager(): void {
+  const os = platform();
+  if (os === "linux") {
+    console.log("Restarting via systemd...");
+    try {
+      execSync("systemctl --user restart acp-discord", { stdio: "inherit" });
+    } catch {
+      console.error("Failed to restart systemd service.");
+      console.error("You can try manually: systemctl --user restart acp-discord");
+      process.exit(1);
+    }
+  } else if (os === "darwin") {
+    console.log("Restarting via launchd...");
+    const plistPath = join(homedir(), "Library", "LaunchAgents", "com.acp-discord.plist");
+    try { execSync(`launchctl unload "${plistPath}"`, { stdio: "inherit" }); } catch { /* not loaded */ }
+    try {
+      execSync(`launchctl load "${plistPath}"`, { stdio: "inherit" });
+    } catch {
+      console.error("Failed to restart launchd service.");
+      process.exit(1);
+    }
+  }
+}
+
+function startDaemonViaNpx(): void {
+  try {
+    execFileSync("npx", ["--yes", "acp-discord@latest", "daemon", "start"], {
+      stdio: "inherit",
+    });
+  } catch {
+    console.error("Failed to start daemon with new version.");
+    console.error("You can try manually: npx acp-discord@latest daemon start");
+    process.exit(1);
+  }
+}
+
 export function makeUpdateCommand(): Command {
   return new Command("update")
     .description("Update acp-discord to the latest version")
@@ -45,14 +81,43 @@ export function makeUpdateCommand(): Command {
         process.exit(1);
       }
 
-      if (current === latest) {
+      const upToDate = current === latest;
+      if (upToDate) {
         console.log(`Already up to date (v${current})`);
+      } else {
+        console.log(`Update available: v${current} → v${latest}`);
+      }
+
+      if (upToDate) {
+        // No new version — but if daemon is running, refresh the npx cache
+        // and restart to pick up any stale cache entries
+        const daemonRunning = isDaemonRunning(PID_PATH);
+        if (!daemonRunning) return;
+
+        // Force npx to re-resolve @latest so the restarted daemon uses it
+        console.log("Refreshing npx cache...");
+        try {
+          execFileSync("npx", ["--yes", "acp-discord@latest", "--version"], {
+            stdio: "inherit",
+          });
+        } catch {
+          // Cache refresh failed — not fatal, daemon may still be fine
+          console.warn("Warning: failed to refresh npx cache.");
+        }
+
+        console.log("Restarting daemon to ensure it runs the latest cached version...");
+        if (isAutostartEnabled()) {
+          enableAutostart();
+          restartViaServiceManager();
+        } else {
+          stopDaemon();
+          startDaemonViaNpx();
+        }
+        console.log("Daemon restarted.");
         return;
       }
 
-      console.log(`Update available: v${current} → v${latest}`);
-
-      // Pre-fetch the latest version into npx cache so subsequent runs use it
+      // New version available — download and restart/start daemon
       console.log("Downloading latest version...");
       try {
         execFileSync("npx", ["--yes", "acp-discord@latest", "--version"], {
@@ -67,51 +132,17 @@ export function makeUpdateCommand(): Command {
       const autostart = isAutostartEnabled();
 
       if (autostart) {
-        // When managed by systemd/launchd, regenerate config and use the
-        // service manager to restart — avoids conflicts with Restart=always.
         console.log("Updating autostart configuration...");
         enableAutostart();
-
-        const os = platform();
-        if (os === "linux") {
-          console.log("Restarting via systemd...");
-          try {
-            execSync("systemctl --user restart acp-discord", { stdio: "inherit" });
-          } catch {
-            console.error("Failed to restart systemd service.");
-            console.error("You can try manually: systemctl --user restart acp-discord");
-            process.exit(1);
-          }
-        } else if (os === "darwin") {
-          console.log("Restarting via launchd...");
-          const plistPath = join(homedir(), "Library", "LaunchAgents", "com.acp-discord.plist");
-          // Unload may fail if not currently loaded — that's fine
-          try { execSync(`launchctl unload "${plistPath}"`, { stdio: "inherit" }); } catch { /* not loaded */ }
-          try {
-            execSync(`launchctl load "${plistPath}"`, { stdio: "inherit" });
-          } catch {
-            console.error("Failed to restart launchd service.");
-            process.exit(1);
-          }
-        }
+        restartViaServiceManager();
       } else {
-        // Manual daemon management — stop and restart directly
         const wasRunning = isDaemonRunning(PID_PATH);
         if (wasRunning) {
           console.log("Stopping daemon...");
           stopDaemon();
         }
-
-        console.log("Restarting daemon...");
-        try {
-          execFileSync("npx", ["--yes", "acp-discord@latest", "daemon", "start"], {
-            stdio: "inherit",
-          });
-        } catch {
-          console.error("Failed to start daemon with new version.");
-          console.error("You can try manually: npx acp-discord@latest daemon start");
-          process.exit(1);
-        }
+        console.log("Starting daemon with new version...");
+        startDaemonViaNpx();
       }
 
       console.log(`Updated to v${latest}`);

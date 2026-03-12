@@ -74,11 +74,15 @@ export function parseConfig(toml: string): AppConfig {
     if (ch.auto_reply !== undefined && typeof ch.auto_reply !== "boolean") {
       throw new Error(`channels.${id}.auto_reply must be a boolean`);
     }
+    if (ch.discord_tools !== undefined && typeof ch.discord_tools !== "boolean") {
+      throw new Error(`channels.${id}.discord_tools must be a boolean`);
+    }
 
     parsedChannels[id] = {
       agent: agentRef,
       cwd: ch.cwd ? String(ch.cwd) : undefined,
       auto_reply: ch.auto_reply === true,
+      discord_tools: ch.discord_tools ?? undefined,
     };
   }
 
@@ -110,6 +114,7 @@ export function resolveChannelConfig(
     agent: {
       ...agentConf,
       cwd: channelConf.cwd ?? agentConf.cwd,
+      discord_tools: channelConf.discord_tools ?? agentConf.discord_tools,
     },
     autoReply: channelConf.auto_reply === true,
   };
