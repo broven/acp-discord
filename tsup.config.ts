@@ -5,6 +5,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     daemon: "src/daemon/index.ts",
+    "mcp-discord-channels": "src/mcp/discord-channels.ts",
   },
   format: ["esm"],
   target: "node18",

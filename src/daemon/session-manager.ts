@@ -4,6 +4,13 @@ import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclie
 import type { AgentConfig } from "../shared/types.js";
 import { createAcpClient, type AcpEventHandlers } from "./acp-client.js";
 
+export interface McpServerConfig {
+  name: string;
+  command: string;
+  args: string[];
+  env: Array<{ name: string; value: string }>;
+}
+
 interface ManagedSession {
   channelId: string;
   process: ChildProcess;
@@ -25,8 +32,8 @@ export class SessionManager {
     this.handlers = handlers;
   }
 
-  async prompt(channelId: string, text: string, agentConfig: AgentConfig, requestorId: string): Promise<string> {
-    const session = await this.getOrCreate(channelId, agentConfig, requestorId);
+  async prompt(channelId: string, text: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<string> {
+    const session = await this.getOrCreate(channelId, agentConfig, requestorId, mcpServers);
     session.lastActivity = Date.now();
     this.resetIdleTimer(session, agentConfig.idle_timeout);
 
@@ -67,13 +74,13 @@ export class SessionManager {
     }
   }
 
-  private async getOrCreate(channelId: string, agentConfig: AgentConfig, requestorId: string): Promise<ManagedSession> {
+  private async getOrCreate(channelId: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
     const existing = this.sessions.get(channelId);
     if (existing) return existing;
-    return this.createSession(channelId, agentConfig, requestorId);
+    return this.createSession(channelId, agentConfig, requestorId, mcpServers);
   }
 
-  private async createSession(channelId: string, config: AgentConfig, requestorId: string): Promise<ManagedSession> {
+  private async createSession(channelId: string, config: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
     const proc = spawn(config.command, config.args, {
       stdio: ["pipe", "pipe", "inherit"],
       cwd: config.cwd,
@@ -126,7 +133,7 @@ export class SessionManager {
 
       const result = await connection.newSession({
         cwd: config.cwd,
-        mcpServers: [],
+        mcpServers: mcpServers ?? [],
       });
       sessionId = result.sessionId;
     } catch (err) {
