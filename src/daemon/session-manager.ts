@@ -89,11 +89,14 @@ export class SessionManager {
       }
     });
 
-    proc.on("exit", () => {
+    proc.on("exit", (code) => {
       const session = this.sessions.get(channelId);
       if (session?.process === proc) {
-        this.sessions.delete(channelId);
         clearTimeout(session.idleTimer);
+        this.sessions.delete(channelId);
+        if (code !== 0 && code !== null) {
+          console.warn(`Agent process for channel ${channelId} exited with code ${code}`);
+        }
       }
     });
 

@@ -26,10 +26,12 @@ export function enableAutostart(): void {
     const service = `[Unit]
 Description=acp-discord daemon
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 ExecStart=${npx} acp-discord daemon run
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]
