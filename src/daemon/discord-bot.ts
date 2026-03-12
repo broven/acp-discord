@@ -226,6 +226,22 @@ export async function startDiscordBot(config: AppConfig): Promise<void> {
     ],
   });
 
+  discordClient.on("error", (err) => {
+    console.error("Discord client error:", err);
+  });
+
+  discordClient.on("warn", (msg) => {
+    console.warn("Discord client warning:", msg);
+  });
+
+  discordClient.on("shardDisconnect", (event, shardId) => {
+    console.warn(`Shard ${shardId} disconnected (code: ${event.code})`);
+  });
+
+  discordClient.on("shardReconnecting", (shardId) => {
+    console.log(`Shard ${shardId} reconnecting...`);
+  });
+
   discordClient.on(Events.ClientReady, async (c) => {
     console.log(`Discord bot ready: ${c.user.tag}`);
 

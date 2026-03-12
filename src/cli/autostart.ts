@@ -26,10 +26,12 @@ export function enableAutostart(): void {
     const service = `[Unit]
 Description=acp-discord daemon
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 ExecStart=${npx} acp-discord daemon run
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]
@@ -80,6 +82,16 @@ WantedBy=default.target
   } else {
     console.error(`Auto-start not supported on ${os}. Use your OS service manager manually.`);
   }
+}
+
+export function isAutostartEnabled(): boolean {
+  const os = platform();
+  if (os === "linux") {
+    return existsSync(join(SYSTEMD_DIR, SYSTEMD_SERVICE));
+  } else if (os === "darwin") {
+    return existsSync(join(LAUNCHD_DIR, LAUNCHD_PLIST));
+  }
+  return false;
 }
 
 export function disableAutostart(): void {

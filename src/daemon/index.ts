@@ -9,6 +9,18 @@ const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
 const PID_PATH = join(CONFIG_DIR, "daemon.pid");
 
 export async function runDaemon(): Promise<void> {
+  // Global error handlers — graceful shutdown on fatal errors, continue on rejections
+  process.on("uncaughtException", (err) => {
+    console.error("Uncaught exception:", err);
+    // Allow event loop to flush logs, then exit for restart by service manager
+    setTimeout(() => process.exit(1), 1000);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled rejection:", reason);
+    // Unhandled rejections are less severe — log but continue
+  });
+
   // Load config first — if it fails, no stale PID file is left behind (#12)
   const config = loadConfig(CONFIG_PATH);
 
