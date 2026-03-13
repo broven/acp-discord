@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     daemon: "src/daemon/index.ts",
     "mcp-discord-channels": "src/mcp/discord-channels.ts",
+    "mcp-scheduled-tasks": "src/mcp/scheduled-tasks.ts",
   },
   format: ["esm"],
   target: "node18",

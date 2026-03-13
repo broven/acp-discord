@@ -49,12 +49,18 @@ export function parseConfig(toml: string): AppConfig {
       throw new Error(`agents.${name}.discord_tools must be a boolean`);
     }
 
+    // Validate scheduled_tasks is a boolean if provided
+    if (agent.scheduled_tasks !== undefined && typeof agent.scheduled_tasks !== "boolean") {
+      throw new Error(`agents.${name}.scheduled_tasks must be a boolean`);
+    }
+
     parsedAgents[name] = {
       command: agent.command,
       args: (agent.args as string[]) ?? [],
       cwd: typeof agent.cwd === "string" ? agent.cwd : process.cwd(),
       idle_timeout: typeof agent.idle_timeout === "number" ? agent.idle_timeout : 600,
       discord_tools: agent.discord_tools === true,
+      scheduled_tasks: agent.scheduled_tasks === true,
     };
   }
 
@@ -77,12 +83,16 @@ export function parseConfig(toml: string): AppConfig {
     if (ch.discord_tools !== undefined && typeof ch.discord_tools !== "boolean") {
       throw new Error(`channels.${id}.discord_tools must be a boolean`);
     }
+    if (ch.scheduled_tasks !== undefined && typeof ch.scheduled_tasks !== "boolean") {
+      throw new Error(`channels.${id}.scheduled_tasks must be a boolean`);
+    }
 
     parsedChannels[id] = {
       agent: agentRef,
       cwd: ch.cwd ? String(ch.cwd) : undefined,
       auto_reply: ch.auto_reply === true,
       discord_tools: ch.discord_tools ?? undefined,
+      scheduled_tasks: ch.scheduled_tasks ?? undefined,
     };
   }
 
@@ -115,6 +125,7 @@ export function resolveChannelConfig(
       ...agentConf,
       cwd: channelConf.cwd ?? agentConf.cwd,
       discord_tools: channelConf.discord_tools ?? agentConf.discord_tools,
+      scheduled_tasks: channelConf.scheduled_tasks ?? agentConf.scheduled_tasks,
     },
     autoReply: channelConf.auto_reply === true,
   };
