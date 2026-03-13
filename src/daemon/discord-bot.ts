@@ -23,6 +23,8 @@ import { sendPermissionRequest } from "./permission-ui.js";
 import { splitMessage, formatToolSummary, formatDiff, type ToolStatus } from "./message-bridge.js";
 import type { AcpEventHandlers, DiffContent } from "./acp-client.js";
 import { IpcServer, DEFAULT_IPC_SOCKET_PATH } from "./ipc-server.js";
+import { TaskScheduler } from "./task-scheduler.js";
+import { runTask } from "./task-runner.js";
 
 export async function startDiscordBot(config: AppConfig, sessionsPath: string, configPath: string): Promise<void> {
   let currentConfig = config;
@@ -126,6 +128,54 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
   }
 
   // --- IPC Server ---
+
+  // --- Task Scheduler ---
+
+  const taskScheduler = new TaskScheduler(async (task) => {
+    const resolved = router.resolve(task.channel_id);
+    if (!resolved) {
+      console.error(`TaskScheduler: no resolved config for channel ${task.channel_id}`);
+      taskScheduler.logRun(task.id, {
+        startedAt: new Date(),
+        completedAt: new Date(),
+        durationMs: 0,
+        status: "error",
+        output: "",
+        error: `No resolved config for channel ${task.channel_id}`,
+      });
+      return;
+    }
+
+    const channel = await fetchChannel(task.channel_id);
+    const guildId = channel?.guild?.id ?? null;
+    const mcpServers = guildId ? buildMcpServers(task.channel_id, task.agent_name, guildId) : [];
+
+    const startedAt = new Date();
+    const result = await runTask(resolved.agent, task.prompt, mcpServers);
+    const completedAt = new Date();
+    const durationMs = completedAt.getTime() - startedAt.getTime();
+
+    taskScheduler.logRun(task.id, {
+      startedAt,
+      completedAt,
+      durationMs,
+      status: result.error ? "error" : "success",
+      output: result.output,
+      error: result.error,
+    });
+
+    const shouldNotify =
+      task.notify === "always" ||
+      (task.notify === "on_error" && result.error);
+
+    if (shouldNotify && channel) {
+      const text = result.error ?? result.output;
+      const chunks = splitMessage(text || "(no output)");
+      for (const chunk of chunks) {
+        await channel.send(chunk);
+      }
+    }
+  });
 
   const ipcServer = new IpcServer(
     {
@@ -249,6 +299,30 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
         }
         return { success: true, bindings };
       },
+      createTask(params) {
+        try {
+          const task = taskScheduler.createTask(params as Parameters<typeof taskScheduler.createTask>[0]);
+          return { task };
+        } catch (err) {
+          return { error: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      listTasks(channelId) {
+        return { tasks: taskScheduler.listTasks(channelId) };
+      },
+      updateTask(taskId, updates, channelId) {
+        const task = taskScheduler.updateTask(taskId, updates, channelId);
+        if (!task) return { error: `Task ${taskId} not found` };
+        return { task };
+      },
+      deleteTask(taskId, channelId) {
+        const deleted = taskScheduler.deleteTask(taskId, channelId);
+        if (!deleted) return { error: `Task ${taskId} not found` };
+        return { deleted: true };
+      },
+      getTaskLogs(taskId, channelId) {
+        return { logs: taskScheduler.getTaskLogs(taskId, channelId) };
+      },
     },
     DEFAULT_IPC_SOCKET_PATH,
   );
@@ -315,26 +389,25 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
   function buildMcpServers(channelId: string, agentName: string, guildId: string): McpServerConfig[] {
     const resolved = router.resolve(channelId);
     const discordToolsEnabled = resolved?.agent.discord_tools ?? false;
-    console.log(`[MCP] buildMcpServers: channel=${channelId} agent=${agentName} discord_tools=${discordToolsEnabled}`);
+    const scheduledTasksEnabled = resolved?.agent.scheduled_tasks ?? false;
+    console.log(`[MCP] buildMcpServers: channel=${channelId} agent=${agentName} discord_tools=${discordToolsEnabled} scheduled_tasks=${scheduledTasksEnabled}`);
 
-    if (!discordToolsEnabled) {
-      console.log(`[MCP] buildMcpServers: discord_tools is falsy, returning empty array`);
-      return [];
-    }
+    const mcpConfig: McpServerConfig[] = [];
 
     // Resolve the built MCP server script path relative to this package
     // import.meta.dirname is available in Node 21.2+; fall back to fileURLToPath for Node 18
     const currentDir = import.meta.dirname ?? dirname(fileURLToPath(import.meta.url));
-    const mcpScriptPath = resolvePath(currentDir, "mcp-discord-channels.js");
-    const scriptExists = existsSync(mcpScriptPath);
 
-    console.log(`[MCP] buildMcpServers: mcpScriptPath=${mcpScriptPath} exists=${scriptExists}`);
-    if (!scriptExists) {
-      console.warn(`[MCP] WARNING: MCP script not found at ${mcpScriptPath} — Discord tools will not work`);
-    }
+    if (discordToolsEnabled) {
+      const mcpScriptPath = resolvePath(currentDir, "mcp-discord-channels.js");
+      const scriptExists = existsSync(mcpScriptPath);
 
-    const mcpConfig: McpServerConfig[] = [
-      {
+      console.log(`[MCP] buildMcpServers: mcpScriptPath=${mcpScriptPath} exists=${scriptExists}`);
+      if (!scriptExists) {
+        console.warn(`[MCP] WARNING: MCP script not found at ${mcpScriptPath} — Discord tools will not work`);
+      }
+
+      mcpConfig.push({
         name: "discord-channels",
         command: "node",
         args: [mcpScriptPath],
@@ -345,8 +418,29 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
           { name: "AGENT_NAME", value: agentName },
           { name: "SOURCE_CHANNEL_ID", value: channelId },
         ],
-      },
-    ];
+      });
+    }
+
+    if (scheduledTasksEnabled) {
+      const tasksMcpPath = resolvePath(currentDir, "mcp-scheduled-tasks.js");
+      const tasksScriptExists = existsSync(tasksMcpPath);
+
+      console.log(`[MCP] buildMcpServers: tasksMcpPath=${tasksMcpPath} exists=${tasksScriptExists}`);
+      if (!tasksScriptExists) {
+        console.warn(`[MCP] WARNING: MCP script not found at ${tasksMcpPath} — Scheduled tasks tools will not work`);
+      } else {
+        mcpConfig.push({
+          name: "scheduled-tasks",
+          command: "node",
+          args: [tasksMcpPath],
+          env: [
+            { name: "IPC_SOCKET_PATH", value: DEFAULT_IPC_SOCKET_PATH },
+            { name: "AGENT_NAME", value: agentName },
+            { name: "SOURCE_CHANNEL_ID", value: channelId },
+          ],
+        });
+      }
+    }
 
     console.log(`[MCP] buildMcpServers: returning ${mcpConfig.length} MCP server(s):`, JSON.stringify(mcpConfig.map(s => ({ name: s.name, command: s.command, args: s.args }))));
     return mcpConfig;
@@ -667,12 +761,14 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
     await interaction.reply("Session cleared. Next message will start a fresh agent.");
   });
 
-  // --- Start IPC server ---
+  // --- Start IPC server and task scheduler ---
   await ipcServer.start();
+  taskScheduler.start();
 
   // Graceful shutdown
   process.on("SIGTERM", () => {
     for (const channelId of typingIntervals.keys()) stopTyping(channelId);
+    taskScheduler.stop();
     ipcServer.stop();
     sessionManager.teardownAll();
     discordClient.destroy();
@@ -680,6 +776,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
 
   process.on("SIGINT", () => {
     for (const channelId of typingIntervals.keys()) stopTyping(channelId);
+    taskScheduler.stop();
     ipcServer.stop();
     sessionManager.teardownAll();
     discordClient.destroy();

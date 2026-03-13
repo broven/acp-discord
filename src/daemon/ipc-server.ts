@@ -20,6 +20,14 @@ export interface BindingInfo {
   discordTools: boolean;
 }
 
+export interface TaskCrudResult {
+  task?: unknown;
+  tasks?: unknown[];
+  logs?: unknown[];
+  error?: string;
+  deleted?: boolean;
+}
+
 export interface IpcHandler {
   registerChannel(channelId: string, agentName: string, autoReply: boolean): void;
   unregisterChannel(channelId: string): void;
@@ -27,6 +35,11 @@ export interface IpcHandler {
   bindChannel(channelId: string, agentName: string, opts: BindChannelOpts, guildId?: string): Promise<{ success: boolean; error?: string }>;
   unbindChannel(channelId: string, guildId?: string): Promise<{ success: boolean; error?: string }>;
   listBindings(guildId?: string): Promise<{ success: boolean; bindings: BindingInfo[] }>;
+  createTask?(params: Record<string, unknown>): TaskCrudResult;
+  listTasks?(channelId?: string): TaskCrudResult;
+  updateTask?(taskId: string, updates: Record<string, unknown>, channelId?: string): TaskCrudResult;
+  deleteTask?(taskId: string, channelId?: string): TaskCrudResult;
+  getTaskLogs?(taskId?: string, channelId?: string): TaskCrudResult;
 }
 
 interface IpcMessage {
@@ -41,6 +54,13 @@ interface IpcMessage {
   cwd?: string;
   discordTools?: boolean;
   guildId?: string;
+  // Task-related fields
+  taskId?: string;
+  prompt?: string;
+  scheduleType?: string;
+  scheduleValue?: string;
+  notify?: string;
+  updates?: Record<string, unknown>;
 }
 
 export class IpcServer {
@@ -166,6 +186,60 @@ export class IpcServer {
           const result = await this.handler.listBindings(msg.guildId);
           socket.write(JSON.stringify({ requestId: msg.requestId, ...result }) + "\n");
         }
+        break;
+      }
+
+      case "create_task": {
+        if (!msg.requestId || !this.handler.createTask) break;
+        try {
+          const result = this.handler.createTask({
+            channel_id: msg.channelId ?? msg.sourceChannelId ?? "",
+            agent_name: msg.agentName ?? "unknown",
+            prompt: msg.prompt ?? "",
+            schedule_type: msg.scheduleType ?? "once",
+            schedule_value: msg.scheduleValue ?? "",
+            description: msg.description,
+            notify: msg.notify,
+            created_by: "agent",
+          });
+          socket.write(JSON.stringify({ requestId: msg.requestId, ...result }) + "\n");
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          socket.write(JSON.stringify({ requestId: msg.requestId, error: errMsg }) + "\n");
+        }
+        break;
+      }
+
+      case "list_tasks": {
+        if (!msg.requestId || !this.handler.listTasks) break;
+        const listResult = this.handler.listTasks(msg.channelId);
+        socket.write(JSON.stringify({ requestId: msg.requestId, ...listResult }) + "\n");
+        break;
+      }
+
+      case "update_task": {
+        if (!msg.requestId || !msg.taskId || !this.handler.updateTask) break;
+        try {
+          const updateResult = this.handler.updateTask(msg.taskId, msg.updates ?? {}, msg.channelId);
+          socket.write(JSON.stringify({ requestId: msg.requestId, ...updateResult }) + "\n");
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          socket.write(JSON.stringify({ requestId: msg.requestId, error: errMsg }) + "\n");
+        }
+        break;
+      }
+
+      case "delete_task": {
+        if (!msg.requestId || !msg.taskId || !this.handler.deleteTask) break;
+        const deleteResult = this.handler.deleteTask(msg.taskId, msg.channelId);
+        socket.write(JSON.stringify({ requestId: msg.requestId, ...deleteResult }) + "\n");
+        break;
+      }
+
+      case "get_task_logs": {
+        if (!msg.requestId || !this.handler.getTaskLogs) break;
+        const logsResult = this.handler.getTaskLogs(msg.taskId, msg.channelId);
+        socket.write(JSON.stringify({ requestId: msg.requestId, ...logsResult }) + "\n");
         break;
       }
 

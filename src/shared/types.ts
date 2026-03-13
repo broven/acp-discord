@@ -4,6 +4,7 @@ export interface AgentConfig {
   cwd: string;
   idle_timeout: number;
   discord_tools: boolean;
+  scheduled_tasks: boolean;
 }
 
 export interface ChannelConfig {
@@ -11,6 +12,7 @@ export interface ChannelConfig {
   cwd?: string; // override agent's default cwd
   auto_reply?: boolean; // respond to all messages, not just @mentions
   discord_tools?: boolean; // override agent's discord_tools setting
+  scheduled_tasks?: boolean; // override agent's scheduled_tasks setting
 }
 
 export interface DiscordConfig {
