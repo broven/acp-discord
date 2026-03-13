@@ -12,6 +12,7 @@ Send a message in Discord, get AI coding assistance back — with tool call visu
 - **Tool call visualization** — see what the agent is doing (⏳ pending → 🔄 running → ✅ done / ❌ failed), with a ⏹️ stop button to cancel
 - **Permission UI** — Discord buttons for approving/denying agent actions, with file diffs shown inline for review before approval
 - **Discord channel management** — agents can create/delete/modify Discord channels via MCP tools, with user confirmation for all mutating operations
+- **Scheduled tasks** — agents can create once/cron/interval tasks that fire in isolated sessions, with configurable Discord notifications
 - **Auto-reply mode** — optionally respond to all messages in a channel, not just mentions
 - **Multi-agent support** — different channels can use different agents
 - **Daemon mode** — runs in background with auto-start (systemd/launchd)
@@ -48,6 +49,7 @@ args = ["--acp"]
 cwd = "/path/to/your/project"
 idle_timeout = 600  # seconds before idle session is terminated (default: 600)
 discord_tools = true  # enable Discord channel management MCP tools (default: false)
+scheduled_tasks = true  # enable scheduled task MCP tools (default: false)
 
 [channels.1234567890123456]
 agent = "claude"
@@ -109,6 +111,30 @@ When `discord_tools = true` is set on an agent, the bot injects an MCP server th
 
 All mutating operations (create, delete, update) require user approval via Discord buttons before executing. Newly created channels are automatically registered so the bot responds to messages there.
 
+### Scheduled Tasks
+
+When `scheduled_tasks = true` is set on an agent, the bot injects an MCP server that gives the agent tools to create and manage scheduled tasks. Each task fires by spawning an isolated, ephemeral agent session.
+
+| Tool | Description | Requires Approval |
+|------|-------------|:-----------------:|
+| `list_scheduled_tasks` | List all scheduled tasks for this channel | No |
+| `create_scheduled_task` | Create a new scheduled task | Yes |
+| `update_scheduled_task` | Update an existing task | Yes |
+| `delete_scheduled_task` | Delete a task | Yes |
+| `get_task_logs` | Get execution history | No |
+
+**Schedule types:**
+- `once` — fire at a specific ISO datetime, then auto-complete
+- `cron` — recurring via cron expression (e.g. `*/5 * * * *`)
+- `interval` — recurring every N seconds, anchored to last run to prevent drift
+
+**Notification modes** (per task, default `on_error`):
+- `always` — post agent output to Discord after every run
+- `on_error` — only post if execution fails
+- `never` — silent, log only
+
+Tasks are scoped to the channel that created them. Task data is persisted at `~/.acp-discord/scheduled-tasks.json` and execution history at `~/.acp-discord/task-run-logs.json`.
+
 ### Development
 
 ```bash
@@ -124,13 +150,18 @@ Discord User
     ↓  slash command / mention
 Discord Bot (discord.js)
     ↓  channel routing           ↑ IPC (Unix socket)
-Session Manager                MCP Server (discord-channels)
+Session Manager                MCP Servers (discord-channels, scheduled-tasks)
     ↓  spawn agent subprocess      ↑ MCP tools (stdio)
 ACP Client (JSON-RPC over stdio)
     ↓  prompt / permissions / tool calls
 Agent (claude-code, codex, etc.)
     ↑
 Discord messages, embeds, buttons
+
+TaskScheduler (15s poll loop)
+    ↓  fires due tasks
+Ephemeral ACP Session (isolated, destroyed after)
+    ↓  conditionally posts to Discord (based on notify setting)
 ```
 
 ## License
