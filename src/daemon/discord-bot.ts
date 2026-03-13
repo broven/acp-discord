@@ -16,6 +16,7 @@ import { resolve as resolvePath, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { AppConfig } from "../shared/types.js";
+import { saveConfig, resolveChannelConfig } from "../shared/config.js";
 import { ChannelRouter } from "./channel-router.js";
 import { SessionManager, type McpServerConfig } from "./session-manager.js";
 import { sendPermissionRequest } from "./permission-ui.js";
@@ -23,8 +24,9 @@ import { splitMessage, formatToolSummary, formatDiff, type ToolStatus } from "./
 import type { AcpEventHandlers, DiffContent } from "./acp-client.js";
 import { IpcServer, DEFAULT_IPC_SOCKET_PATH } from "./ipc-server.js";
 
-export async function startDiscordBot(config: AppConfig, sessionsPath: string): Promise<void> {
-  const router = new ChannelRouter(config);
+export async function startDiscordBot(config: AppConfig, sessionsPath: string, configPath: string): Promise<void> {
+  let currentConfig = config;
+  const router = new ChannelRouter(currentConfig);
 
   // Per-channel state for display
   const toolStates = new Map<string, Map<string, { title: string; status: ToolStatus; rawInput?: Record<string, unknown> }>>();
@@ -136,6 +138,117 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string): 
         console.log(`IPC: unregistered dynamic channel ${channelId}`);
       },
       confirmAction: handleConfirmAction,
+
+      async bindChannel(channelId, agentName, opts, guildId) {
+        // Validate guild ownership if guildId provided
+        if (guildId) {
+          try {
+            const channel = await discordClient.channels.fetch(channelId);
+            const channelGuildId = channel && "guildId" in channel ? (channel as { guildId: string }).guildId : null;
+            if (channelGuildId !== guildId) {
+              return { success: false, error: `Channel ${channelId} does not belong to guild ${guildId}` };
+            }
+          } catch {
+            return { success: false, error: `Cannot verify channel ${channelId}` };
+          }
+        }
+
+        // Validate agent exists
+        if (!currentConfig.agents[agentName]) {
+          return { success: false, error: `Unknown agent "${agentName}"` };
+        }
+
+        // Update in-memory config
+        currentConfig.channels[channelId] = {
+          agent: agentName,
+          cwd: opts.cwd,
+          auto_reply: opts.autoReply ?? true,
+          discord_tools: opts.discordTools,
+        };
+
+        // Register in router
+        router.registerDynamic(channelId, agentName, opts.autoReply ?? true);
+
+        // Persist to config.toml
+        try {
+          saveConfig(configPath, currentConfig);
+        } catch (err) {
+          // Rollback in-memory state on write failure
+          delete currentConfig.channels[channelId];
+          router.unregisterDynamic(channelId);
+          const message = err instanceof Error ? err.message : String(err);
+          return { success: false, error: `Failed to save config: ${message}` };
+        }
+
+        console.log(`IPC: bound channel ${channelId} -> agent ${agentName}`);
+        return { success: true };
+      },
+
+      async unbindChannel(channelId, guildId) {
+        // Validate guild ownership if guildId provided
+        if (guildId) {
+          try {
+            const channel = await discordClient.channels.fetch(channelId);
+            const channelGuildId = channel && "guildId" in channel ? (channel as { guildId: string }).guildId : null;
+            if (channelGuildId !== guildId) {
+              return { success: false, error: `Channel ${channelId} does not belong to guild ${guildId}` };
+            }
+          } catch {
+            // Channel may have been deleted — allow unbinding if it exists in config
+          }
+        }
+
+        if (!currentConfig.channels[channelId]) {
+          return { success: false, error: `Channel ${channelId} is not bound` };
+        }
+
+        // Save for rollback
+        const previous = currentConfig.channels[channelId];
+
+        // Update in-memory
+        delete currentConfig.channels[channelId];
+        router.unregisterDynamic(channelId);
+
+        // Persist
+        try {
+          saveConfig(configPath, currentConfig);
+        } catch (err) {
+          // Rollback
+          currentConfig.channels[channelId] = previous;
+          router.registerDynamic(channelId, previous.agent, previous.auto_reply ?? false);
+          const message = err instanceof Error ? err.message : String(err);
+          return { success: false, error: `Failed to save config: ${message}` };
+        }
+
+        console.log(`IPC: unbound channel ${channelId}`);
+        return { success: true };
+      },
+
+      async listBindings(guildId) {
+        const entries = Object.entries(currentConfig.channels);
+        const bindings = [];
+        for (const [channelId, ch] of entries) {
+          // Filter by guild if specified
+          if (guildId) {
+            try {
+              const channel = discordClient.channels.cache.get(channelId) ?? await discordClient.channels.fetch(channelId);
+              const channelGuildId = channel && "guildId" in channel ? (channel as { guildId: string }).guildId : null;
+              if (channelGuildId !== guildId) continue;
+            } catch {
+              continue;
+            }
+          }
+          const resolved = resolveChannelConfig(currentConfig, channelId);
+          bindings.push({
+            channelId,
+            agent: ch.agent,
+            cwd: ch.cwd ?? currentConfig.agents[ch.agent]?.cwd,
+            autoReply: ch.auto_reply ?? false,
+            discordTools: resolved?.agent.discord_tools ?? false,
+          });
+        }
+        return { success: true, bindings };
+      },
     },
     DEFAULT_IPC_SOCKET_PATH,
   );

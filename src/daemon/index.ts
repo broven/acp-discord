@@ -31,7 +31,7 @@ export async function runDaemon(): Promise<void> {
   console.log(`acp-discord daemon started (PID: ${process.pid})`);
   console.log(`Loaded config: ${Object.keys(config.channels).length} channel(s)`);
 
-  await startDiscordBot(config, SESSIONS_PATH);
+  await startDiscordBot(config, SESSIONS_PATH, CONFIG_PATH);
 }
 
 if (process.env.ACP_DISCORD_DAEMON === "1") {

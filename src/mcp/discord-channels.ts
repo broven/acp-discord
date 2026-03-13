@@ -175,6 +175,7 @@ server.tool(
             id: channel.id,
             name: channel.name,
             url: `https://discord.com/channels/${GUILD_ID}/${channel.id}`,
+            hint: "Use bind_channel to persist this binding to config.toml so it survives daemon restarts.",
           }),
         },
       ],
@@ -205,8 +206,16 @@ server.tool(
 
     await rest.delete(Routes.channel(channel_id));
 
-    // Unregister the channel from the bot
-    ipcSend({ action: "unregister_channel", channelId: channel_id });
+    // Unbind the channel persistently (removes from config.toml)
+    const unbindRequestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await ipcRequest({
+      action: "unbind_channel",
+      requestId: unbindRequestId,
+      channelId: channel_id,
+      guildId: GUILD_ID,
+    }).catch(() => {
+      // Best-effort: channel may not have been bound
+    });
 
     return {
       content: [{ type: "text" as const, text: `Deleted channel #${channel.name} (${channel_id})` }],
@@ -254,6 +263,101 @@ server.tool(
           text: JSON.stringify({ id: updated.id, name: updated.name, topic: updated.topic }),
         },
       ],
+    };
+  },
+);
+
+// Tool: bind_channel
+server.tool(
+  "bind_channel",
+  "Bind a Discord channel to an agent. Persists to config.toml so the binding survives daemon restarts.",
+  {
+    channel_id: z.string().describe("ID of the channel to bind"),
+    agent: z.string().describe("Name of the agent to bind to"),
+    cwd: z.string().optional().describe("Working directory override for this channel"),
+    auto_reply: z.boolean().optional().describe("Respond to all messages, not just @mentions (default: true)"),
+    discord_tools: z.boolean().optional().describe("Enable Discord channel management tools for this channel"),
+  },
+  async ({ channel_id, agent, cwd, auto_reply, discord_tools }) => {
+    // Validate channel belongs to this guild
+    await validateChannelInGuild(channel_id);
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const response = await ipcRequest({
+      action: "bind_channel",
+      requestId,
+      channelId: channel_id,
+      agentName: agent,
+      cwd,
+      autoReply: auto_reply ?? true,
+      discordTools: discord_tools,
+      guildId: GUILD_ID,
+    });
+
+    if (response.success) {
+      return {
+        content: [{ type: "text" as const, text: `Channel ${channel_id} bound to agent "${agent}". Binding persisted to config.toml.` }],
+      };
+    }
+    return {
+      content: [{ type: "text" as const, text: `Failed to bind channel: ${response.error}` }],
+      isError: true,
+    };
+  },
+);
+
+// Tool: unbind_channel
+server.tool(
+  "unbind_channel",
+  "Remove a channel binding. The channel will no longer be monitored by any agent.",
+  {
+    channel_id: z.string().describe("ID of the channel to unbind"),
+  },
+  async ({ channel_id }) => {
+    // Validate channel belongs to this guild
+    await validateChannelInGuild(channel_id);
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const response = await ipcRequest({
+      action: "unbind_channel",
+      requestId,
+      channelId: channel_id,
+      guildId: GUILD_ID,
+    });
+
+    if (response.success) {
+      return {
+        content: [{ type: "text" as const, text: `Channel ${channel_id} unbound. Binding removed from config.toml.` }],
+      };
+    }
+    return {
+      content: [{ type: "text" as const, text: `Failed to unbind channel: ${response.error}` }],
+      isError: true,
+    };
+  },
+);
+
+// Tool: list_bindings
+server.tool(
+  "list_bindings",
+  "List all channel bindings with their configurations",
+  {},
+  async () => {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const response = await ipcRequest({
+      action: "list_bindings",
+      requestId,
+      guildId: GUILD_ID,
+    });
+
+    if (response.success) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(response.bindings, null, 2) }],
+      };
+    }
+    return {
+      content: [{ type: "text" as const, text: "Failed to list bindings" }],
+      isError: true,
     };
   },
 );

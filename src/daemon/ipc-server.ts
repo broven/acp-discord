@@ -6,10 +6,27 @@ import { join } from "node:path";
 
 export const DEFAULT_IPC_SOCKET_PATH = join(homedir(), ".acp-discord", "ipc.sock");
 
+export interface BindChannelOpts {
+  cwd?: string;
+  autoReply?: boolean;
+  discordTools?: boolean;
+}
+
+export interface BindingInfo {
+  channelId: string;
+  agent: string;
+  cwd?: string;
+  autoReply: boolean;
+  discordTools: boolean;
+}
+
 export interface IpcHandler {
   registerChannel(channelId: string, agentName: string, autoReply: boolean): void;
   unregisterChannel(channelId: string): void;
   confirmAction(sourceChannelId: string, description: string, details: string): Promise<boolean>;
+  bindChannel(channelId: string, agentName: string, opts: BindChannelOpts, guildId?: string): Promise<{ success: boolean; error?: string }>;
+  unbindChannel(channelId: string, guildId?: string): Promise<{ success: boolean; error?: string }>;
+  listBindings(guildId?: string): Promise<{ success: boolean; bindings: BindingInfo[] }>;
 }
 
 interface IpcMessage {
@@ -21,6 +38,9 @@ interface IpcMessage {
   sourceChannelId?: string;
   description?: string;
   details?: string;
+  cwd?: string;
+  discordTools?: boolean;
+  guildId?: string;
 }
 
 export class IpcServer {
@@ -120,6 +140,34 @@ export class IpcServer {
           socket.write(response);
         }
         break;
+
+      case "bind_channel": {
+        if (msg.requestId && msg.channelId && msg.agentName) {
+          const result = await this.handler.bindChannel(msg.channelId, msg.agentName, {
+            cwd: msg.cwd,
+            autoReply: msg.autoReply,
+            discordTools: msg.discordTools,
+          }, msg.guildId);
+          socket.write(JSON.stringify({ requestId: msg.requestId, ...result }) + "\n");
+        }
+        break;
+      }
+
+      case "unbind_channel": {
+        if (msg.requestId && msg.channelId) {
+          const result = await this.handler.unbindChannel(msg.channelId, msg.guildId);
+          socket.write(JSON.stringify({ requestId: msg.requestId, ...result }) + "\n");
+        }
+        break;
+      }
+
+      case "list_bindings": {
+        if (msg.requestId) {
+          const result = await this.handler.listBindings(msg.guildId);
+          socket.write(JSON.stringify({ requestId: msg.requestId, ...result }) + "\n");
+        }
+        break;
+      }
 
       default:
         console.error("IPC: unknown action:", msg.action);
