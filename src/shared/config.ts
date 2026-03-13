@@ -1,6 +1,6 @@
-import { parse } from "smol-toml";
-import { readFileSync } from "node:fs";
-import type { AppConfig, ResolvedChannelConfig } from "./types.js";
+import { parse, stringify } from "smol-toml";
+import { readFileSync, writeFileSync } from "node:fs";
+import type { AppConfig, ChannelConfig, ResolvedChannelConfig } from "./types.js";
 
 export function parseConfig(toml: string): AppConfig {
   const raw = parse(toml) as Record<string, unknown>;
@@ -106,6 +106,64 @@ export function parseConfig(toml: string): AppConfig {
 export function loadConfig(configPath: string): AppConfig {
   const content = readFileSync(configPath, "utf-8");
   return parseConfig(content);
+}
+
+export function saveConfig(configPath: string, config: AppConfig): void {
+  // Convert AppConfig to a plain object suitable for smol-toml stringify
+  const tomlObj: Record<string, unknown> = {
+    discord: { token: config.discord.token },
+    agents: {} as Record<string, Record<string, unknown>>,
+    channels: {} as Record<string, Record<string, unknown>>,
+  };
+
+  const agents = tomlObj.agents as Record<string, Record<string, unknown>>;
+  for (const [name, agent] of Object.entries(config.agents)) {
+    const a: Record<string, unknown> = {
+      command: agent.command,
+    };
+    if (agent.args.length > 0) a.args = agent.args;
+    if (agent.cwd !== process.cwd()) a.cwd = agent.cwd;
+    if (agent.idle_timeout !== 600) a.idle_timeout = agent.idle_timeout;
+    if (agent.discord_tools) a.discord_tools = agent.discord_tools;
+    if ("scheduled_tasks" in agent && agent.scheduled_tasks) a.scheduled_tasks = agent.scheduled_tasks;
+    agents[name] = a;
+  }
+
+  const channels = tomlObj.channels as Record<string, Record<string, unknown>>;
+  for (const [id, ch] of Object.entries(config.channels)) {
+    const c: Record<string, unknown> = {
+      agent: ch.agent,
+    };
+    if (ch.cwd !== undefined) c.cwd = ch.cwd;
+    if (ch.auto_reply !== undefined) c.auto_reply = ch.auto_reply;
+    if (ch.discord_tools !== undefined) c.discord_tools = ch.discord_tools;
+    if ("scheduled_tasks" in ch && ch.scheduled_tasks !== undefined) c.scheduled_tasks = ch.scheduled_tasks;
+    channels[id] = c;
+  }
+
+  const toml = stringify(tomlObj);
+  writeFileSync(configPath, toml, "utf-8");
+}
+
+export function addChannelToConfig(
+  configPath: string,
+  channelId: string,
+  channelConfig: ChannelConfig,
+): AppConfig {
+  const config = loadConfig(configPath);
+  config.channels[channelId] = channelConfig;
+  saveConfig(configPath, config);
+  return config;
+}
+
+export function removeChannelFromConfig(
+  configPath: string,
+  channelId: string,
+): AppConfig {
+  const config = loadConfig(configPath);
+  delete config.channels[channelId];
+  saveConfig(configPath, config);
+  return config;
 }
 
 export function resolveChannelConfig(
