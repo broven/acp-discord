@@ -37,10 +37,12 @@ export class SessionManager {
   private handlers: AcpEventHandlers;
   private sessionsPath: string;
   private pendingResumes = new Map<string, PersistedSession>();
+  private maxConcurrentSessions: number;
 
-  constructor(handlers: AcpEventHandlers, sessionsPath: string) {
+  constructor(handlers: AcpEventHandlers, sessionsPath: string, maxConcurrentSessions = 1) {
     this.handlers = handlers;
     this.sessionsPath = sessionsPath;
+    this.maxConcurrentSessions = maxConcurrentSessions;
     this.loadSessionMap();
   }
 
@@ -109,14 +111,22 @@ export class SessionManager {
       });
       this.handlers.onPromptComplete(session.channelId, result.stopReason);
       return result.stopReason;
+    } catch (err) {
+      // Connection broken or agent crashed — teardown to kill orphaned processes
+      console.error(`Prompt error for channel ${session.channelId}, tearing down session:`, err);
+      this.handlers.onPromptComplete(session.channelId, "error");
+      this.teardown(session.channelId);
+      throw err;
     } finally {
       session.prompting = false;
-      // Process queue — await and catch to prevent unhandled rejections (#3)
-      const next = session.queue.shift();
-      if (next) {
-        this.executePrompt(session, next.text, next.requestorId, agentConfig).catch((err) => {
-          console.error(`Queued prompt failed for channel ${session.channelId}:`, err);
-        });
+      // Process queue only if session is still alive (not torn down above)
+      if (this.sessions.has(session.channelId)) {
+        const next = session.queue.shift();
+        if (next) {
+          this.executePrompt(session, next.text, next.requestorId, agentConfig).catch((err) => {
+            console.error(`Queued prompt failed for channel ${session.channelId}:`, err);
+          });
+        }
       }
     }
   }
@@ -150,14 +160,45 @@ export class SessionManager {
       this.pendingResumes.delete(channelId);
     }
 
+    // Evict oldest idle session(s) if at capacity
+    this.evictIfNeeded();
+
     console.log(`[MCP] getOrCreate: creating new session for channel=${channelId} with ${mcpServers?.length ?? 0} MCP server(s)`);
     return this.createSession(channelId, agentName, agentConfig, requestorId, mcpServers);
+  }
+
+  private evictIfNeeded(): void {
+    while (this.sessions.size >= this.maxConcurrentSessions) {
+      // Find the least-recently-active non-prompting session
+      let oldest: ManagedSession | null = null;
+      for (const session of this.sessions.values()) {
+        if (session.prompting) continue;
+        if (!oldest || session.lastActivity < oldest.lastActivity) {
+          oldest = session;
+        }
+      }
+      if (!oldest) {
+        // All sessions are actively prompting — evict the oldest anyway
+        for (const session of this.sessions.values()) {
+          if (!oldest || session.lastActivity < oldest.lastActivity) {
+            oldest = session;
+          }
+        }
+      }
+      if (oldest) {
+        console.log(`Evicting session for channel ${oldest.channelId} (lastActivity=${new Date(oldest.lastActivity).toISOString()}) to make room`);
+        this.teardown(oldest.channelId);
+      } else {
+        break;
+      }
+    }
   }
 
   private async createSession(channelId: string, agentName: string, config: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<ManagedSession> {
     const proc = spawn(config.command, config.args, {
       stdio: ["pipe", "pipe", "inherit"],
       cwd: config.cwd,
+      detached: true, // Create new process group so we can kill the entire tree
     });
 
     // Handle spawn errors (ENOENT, permission denied, etc.) (#4)
@@ -221,7 +262,7 @@ export class SessionManager {
       sessionId = result.sessionId;
       console.log(`[MCP] createSession: newSession succeeded, sessionId=${sessionId}`);
     } catch (err) {
-      proc.kill();
+      this.killProcessTree(proc);
       throw err;
     }
 
@@ -246,6 +287,7 @@ export class SessionManager {
     const proc = spawn(config.command, config.args, {
       stdio: ["pipe", "pipe", "inherit"],
       cwd: config.cwd,
+      detached: true, // Create new process group so we can kill the entire tree
     });
 
     proc.on("error", (err) => {
@@ -297,7 +339,7 @@ export class SessionManager {
       // Check if agent supports session resume
       const supportsResume = !!initResult.agentCapabilities?.sessionCapabilities?.resume;
       if (!supportsResume) {
-        proc.kill();
+        this.killProcessTree(proc);
         throw new Error("Agent does not support session resume");
       }
 
@@ -309,7 +351,7 @@ export class SessionManager {
       sessionId = previousSessionId;
       console.log(`Resumed session ${sessionId} for channel ${channelId}`);
     } catch (err) {
-      proc.kill();
+      this.killProcessTree(proc);
       throw err;
     }
 
@@ -344,8 +386,28 @@ export class SessionManager {
     const session = this.sessions.get(channelId);
     if (!session) return;
     clearTimeout(session.idleTimer);
-    session.process.kill();
+    // Kill process group to ensure MCP child processes are also terminated
+    this.killProcessTree(session.process);
     this.sessions.delete(channelId);
+  }
+
+  private killProcessTree(proc: ChildProcess): void {
+    if (!proc.pid) {
+      proc.kill();
+      return;
+    }
+    try {
+      // Kill the entire process group (negative PID) to clean up MCP children
+      process.kill(-proc.pid, "SIGTERM");
+    } catch {
+      // Process group kill failed (e.g. not a group leader) — fall back to direct kill
+      try { proc.kill("SIGTERM"); } catch { /* already dead */ }
+    }
+    // Force-kill after 5s if still alive
+    setTimeout(() => {
+      try { process.kill(-proc.pid!, "SIGKILL"); } catch { /* already dead */ }
+      try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+    }, 5000).unref();
   }
 
   teardownAll(): void {
