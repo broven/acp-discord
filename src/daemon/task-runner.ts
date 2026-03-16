@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import type { Client, RequestPermissionResponse, SessionNotification } from "@agentclientprotocol/sdk";
@@ -11,6 +11,19 @@ export interface TaskRunResult {
   error: string | null;
 }
 
+function killProcessTree(proc: ChildProcess): void {
+  if (!proc.pid) { proc.kill(); return; }
+  try {
+    process.kill(-proc.pid, "SIGTERM");
+  } catch {
+    try { proc.kill("SIGTERM"); } catch { /* already dead */ }
+  }
+  setTimeout(() => {
+    try { process.kill(-proc.pid!, "SIGKILL"); } catch { /* already dead */ }
+    try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+  }, 5000).unref();
+}
+
 export async function runTask(
   agentConfig: AgentConfig,
   prompt: string,
@@ -19,6 +32,7 @@ export async function runTask(
   const proc = spawn(agentConfig.command, agentConfig.args, {
     stdio: ["pipe", "pipe", "inherit"],
     cwd: agentConfig.cwd,
+    detached: true,
   });
 
   let output = "";
@@ -70,10 +84,10 @@ export async function runTask(
       prompt: [{ type: "text", text: prompt }],
     });
 
-    proc.kill();
+    killProcessTree(proc);
     return { output, stopReason: result.stopReason, error: null };
   } catch (err) {
-    proc.kill();
+    killProcessTree(proc);
     error = err instanceof Error ? err.message : String(err);
     return { output, stopReason: "error", error };
   }
