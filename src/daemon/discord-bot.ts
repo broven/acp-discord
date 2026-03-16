@@ -665,8 +665,13 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
       await promptWithMcp(channelId, text, resolved.agentName, getGuildId(message), resolved.agent, message.author.id);
     } catch (err) {
       stopTyping(channelId);
+      const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`Prompt failed for channel ${channelId}:`, err);
-      await message.reply("An error occurred while processing your request.").catch(() => {});
+      if (errMsg.includes("sessions are busy")) {
+        await message.reply("\u23F3 All agent sessions are busy. Please wait for the current task to finish and try again.").catch(() => {});
+      } else {
+        await message.reply("An error occurred while processing your request.").catch(() => {});
+      }
     }
   });
 
@@ -733,8 +738,12 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
       await promptWithMcp(channelId, text, resolved.agentName, guildId, resolved.agent, interaction.user.id);
     } catch (err) {
       stopTyping(channelId);
+      const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`Prompt failed for channel ${channelId}:`, err);
-      await interaction.followUp({ content: "An error occurred while processing your request.", ephemeral: true }).catch(() => {});
+      const reply = errMsg.includes("sessions are busy")
+        ? "\u23F3 All agent sessions are busy. Please wait for the current task to finish and try again."
+        : "An error occurred while processing your request.";
+      await interaction.followUp({ content: reply, ephemeral: true }).catch(() => {});
     }
   });
 

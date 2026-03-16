@@ -39,7 +39,7 @@ export class SessionManager {
   private pendingResumes = new Map<string, PersistedSession>();
   private maxConcurrentSessions: number;
 
-  constructor(handlers: AcpEventHandlers, sessionsPath: string, maxConcurrentSessions = 1) {
+  constructor(handlers: AcpEventHandlers, sessionsPath: string, maxConcurrentSessions = 2) {
     this.handlers = handlers;
     this.sessionsPath = sessionsPath;
     this.maxConcurrentSessions = maxConcurrentSessions;
@@ -169,7 +169,7 @@ export class SessionManager {
 
   private evictIfNeeded(): void {
     while (this.sessions.size >= this.maxConcurrentSessions) {
-      // Find the least-recently-active non-prompting session
+      // Find the least-recently-active non-prompting (idle) session
       let oldest: ManagedSession | null = null;
       for (const session of this.sessions.values()) {
         if (session.prompting) continue;
@@ -178,19 +178,11 @@ export class SessionManager {
         }
       }
       if (!oldest) {
-        // All sessions are actively prompting — evict the oldest anyway
-        for (const session of this.sessions.values()) {
-          if (!oldest || session.lastActivity < oldest.lastActivity) {
-            oldest = session;
-          }
-        }
+        // All sessions are actively prompting — refuse to evict
+        throw new Error("All agent sessions are busy. Please wait for the current task to finish.");
       }
-      if (oldest) {
-        console.log(`Evicting session for channel ${oldest.channelId} (lastActivity=${new Date(oldest.lastActivity).toISOString()}) to make room`);
-        this.teardown(oldest.channelId);
-      } else {
-        break;
-      }
+      console.log(`Evicting idle session for channel ${oldest.channelId} (lastActivity=${new Date(oldest.lastActivity).toISOString()}) to make room`);
+      this.teardown(oldest.channelId);
     }
   }
 
