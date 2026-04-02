@@ -329,6 +329,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
 
   const handlers: AcpEventHandlers = {
     onToolCall(channelId, toolCallId, title, _kind, status, diffs, rawInput) {
+      startTyping(channelId);
       if (!toolStates.has(channelId)) toolStates.set(channelId, new Map());
       toolStates.get(channelId)!.set(toolCallId, { title, status: status as ToolStatus, rawInput });
       accumulateDiffs(channelId, toolCallId, diffs);
