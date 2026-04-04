@@ -658,6 +658,8 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
       return;
     }
 
+    startTyping(channelId);
+
     if (sessionManager.isPrompting(channelId)) {
       await message.reply("\u23F3 Agent is working. Your message has been queued.");
     }
@@ -727,6 +729,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
 
     const text = interaction.options.getString("message", true);
     await interaction.deferReply();
+    startTyping(channelId);
 
     if (sessionManager.isPrompting(channelId)) {
       await interaction.editReply("\u23F3 Agent is working. Your message has been queued.");
