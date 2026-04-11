@@ -25,6 +25,7 @@ import type { AcpEventHandlers, DiffContent } from "./acp-client.js";
 import { IpcServer, DEFAULT_IPC_SOCKET_PATH } from "./ipc-server.js";
 import { TaskScheduler } from "./task-scheduler.js";
 import { runTask } from "./task-runner.js";
+import { shouldHandleDiscordMessage } from "./discord-message.js";
 
 export async function startDiscordBot(config: AppConfig, sessionsPath: string, configPath: string): Promise<void> {
   let currentConfig = config;
@@ -642,6 +643,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
   // Handle @mention messages in configured channels
   discordClient.on(Events.MessageCreate, async (message: Message) => {
     if (message.author.bot) return;
+    if (!shouldHandleDiscordMessage(message)) return;
 
     const channelId = message.channelId;
     const resolved = router.resolve(channelId);
