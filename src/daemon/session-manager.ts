@@ -2,9 +2,16 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION, type ContentBlock } from "@agentclientprotocol/sdk";
 import type { AgentConfig } from "../shared/types.js";
 import { createAcpClient, type AcpEventHandlers } from "./acp-client.js";
+
+export interface ImageAttachment {
+  /** base64-encoded image bytes */
+  data: string;
+  /** e.g. "image/png", "image/jpeg" */
+  mimeType: string;
+}
 
 export interface McpServerConfig {
   name: string;
@@ -22,7 +29,7 @@ interface ManagedSession {
   lastActivity: number;
   idleTimer: NodeJS.Timeout;
   prompting: boolean;
-  queue: Array<{ text: string; requestorId: string }>;
+  queue: Array<{ text: string; requestorId: string; images?: ImageAttachment[] }>;
   /** Set only when executePrompt begins — stable for the duration of the prompt */
   activePromptRequestorId: string;
 }
@@ -87,27 +94,34 @@ export class SessionManager {
     }
   }
 
-  async prompt(channelId: string, text: string, agentName: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[]): Promise<string> {
-    console.log(`[MCP] prompt: channel=${channelId} mcpServers=${mcpServers ? `[${mcpServers.length} server(s)]` : "undefined"}`);
+  async prompt(channelId: string, text: string, agentName: string, agentConfig: AgentConfig, requestorId: string, mcpServers?: McpServerConfig[], images?: ImageAttachment[]): Promise<string> {
+    console.log(`[MCP] prompt: channel=${channelId} mcpServers=${mcpServers ? `[${mcpServers.length} server(s)]` : "undefined"}${images?.length ? ` images=${images.length}` : ""}`);
     const session = await this.getOrCreate(channelId, agentName, agentConfig, requestorId, mcpServers);
     session.lastActivity = Date.now();
     this.resetIdleTimer(session, agentConfig.idle_timeout);
 
     if (session.prompting) {
-      session.queue.push({ text, requestorId });
+      session.queue.push({ text, requestorId, images });
       return "queued";
     }
 
-    return this.executePrompt(session, text, requestorId, agentConfig);
+    return this.executePrompt(session, text, requestorId, agentConfig, images);
   }
 
-  private async executePrompt(session: ManagedSession, text: string, requestorId: string, agentConfig: AgentConfig): Promise<string> {
+  private async executePrompt(session: ManagedSession, text: string, requestorId: string, agentConfig: AgentConfig, images?: ImageAttachment[]): Promise<string> {
     session.prompting = true;
     session.activePromptRequestorId = requestorId;
     try {
+      const contentBlocks: ContentBlock[] = [];
+      if (text) contentBlocks.push({ type: "text", text });
+      if (images?.length) {
+        for (const img of images) {
+          contentBlocks.push({ type: "image", data: img.data, mimeType: img.mimeType });
+        }
+      }
       const result = await session.connection.prompt({
         sessionId: session.sessionId,
-        prompt: [{ type: "text", text }],
+        prompt: contentBlocks,
       });
       this.handlers.onPromptComplete(session.channelId, result.stopReason);
       return result.stopReason;
@@ -123,7 +137,7 @@ export class SessionManager {
       if (this.sessions.has(session.channelId)) {
         const next = session.queue.shift();
         if (next) {
-          this.executePrompt(session, next.text, next.requestorId, agentConfig).catch((err) => {
+          this.executePrompt(session, next.text, next.requestorId, agentConfig, next.images).catch((err) => {
             console.error(`Queued prompt failed for channel ${session.channelId}:`, err);
           });
         }

@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import type { AppConfig } from "../shared/types.js";
 import { saveConfig, resolveChannelConfig } from "../shared/config.js";
 import { ChannelRouter } from "./channel-router.js";
-import { SessionManager, type McpServerConfig } from "./session-manager.js";
+import { SessionManager, type McpServerConfig, type ImageAttachment } from "./session-manager.js";
 import { sendPermissionRequest } from "./permission-ui.js";
 import { splitMessage, formatToolSummary, formatDiff, type ToolStatus } from "./message-bridge.js";
 import type { AcpEventHandlers, DiffContent } from "./acp-client.js";
@@ -582,9 +582,49 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
 
   // --- Helper: prompt with MCP servers ---
 
-  async function promptWithMcp(channelId: string, text: string, agentName: string, guildId: string | null, agentConfig: typeof config.agents[string], requestorId: string): Promise<void> {
+  async function promptWithMcp(channelId: string, text: string, agentName: string, guildId: string | null, agentConfig: typeof config.agents[string], requestorId: string, images?: ImageAttachment[]): Promise<void> {
     const mcpServers = guildId ? buildMcpServers(channelId, agentName, guildId) : undefined;
-    await sessionManager.prompt(channelId, text, agentName, agentConfig, requestorId, mcpServers);
+    await sessionManager.prompt(channelId, text, agentName, agentConfig, requestorId, mcpServers, images);
+  }
+
+  // Max size for forwarded image attachments (10 MB). Larger images are skipped
+  // to avoid OOM and to keep agent token usage reasonable.
+  const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+  async function fetchImage(url: string, mimeType: string, label: string): Promise<ImageAttachment | null> {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.warn(`Failed to fetch image ${label}: ${res.status} ${res.statusText}`);
+        return null;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.byteLength > MAX_IMAGE_BYTES) {
+        console.warn(`Skipping image ${label}: ${buf.byteLength} bytes exceeds ${MAX_IMAGE_BYTES}`);
+        return null;
+      }
+      return { data: buf.toString("base64"), mimeType };
+    } catch (err) {
+      console.warn(`Error fetching image ${label}:`, err);
+      return null;
+    }
+  }
+
+  async function extractMessageImages(message: Message): Promise<ImageAttachment[]> {
+    const out: ImageAttachment[] = [];
+    for (const att of message.attachments.values()) {
+      if (!att.contentType?.startsWith("image/")) {
+        console.log(`Ignoring non-image attachment ${att.name} (contentType=${att.contentType})`);
+        continue;
+      }
+      if (att.size > MAX_IMAGE_BYTES) {
+        console.warn(`Skipping image attachment ${att.name}: ${att.size} bytes exceeds ${MAX_IMAGE_BYTES}`);
+        continue;
+      }
+      const img = await fetchImage(att.url, att.contentType, att.name);
+      if (img) out.push(img);
+    }
+    return out;
   }
 
   // --- Discord client setup ---
@@ -622,6 +662,9 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
       .setDescription("Ask the coding agent a question")
       .addStringOption((opt) =>
         opt.setName("message").setDescription("Your message").setRequired(true),
+      )
+      .addAttachmentOption((opt) =>
+        opt.setName("image").setDescription("Optional image attachment").setRequired(false),
       );
 
     const clearCommand = new SlashCommandBuilder()
@@ -652,9 +695,10 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
 
     // Strip mention prefix if present
     const text = message.content.replace(/<@!?\d+>/g, "").trim();
+    const images = await extractMessageImages(message);
 
-    if (!text) {
-      await message.reply("Please provide a message.");
+    if (!text && images.length === 0) {
+      await message.reply("Please provide a message or an image.");
       return;
     }
 
@@ -665,7 +709,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
     }
 
     try {
-      await promptWithMcp(channelId, text, resolved.agentName, getGuildId(message), resolved.agent, message.author.id);
+      await promptWithMcp(channelId, text, resolved.agentName, getGuildId(message), resolved.agent, message.author.id, images);
     } catch (err) {
       stopTyping(channelId);
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -728,7 +772,19 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
     }
 
     const text = interaction.options.getString("message", true);
+    const imageOpt = interaction.options.getAttachment("image");
     await interaction.deferReply();
+    const images: ImageAttachment[] = [];
+    if (imageOpt) {
+      if (!imageOpt.contentType?.startsWith("image/")) {
+        console.log(`/ask: ignoring non-image attachment ${imageOpt.name} (contentType=${imageOpt.contentType})`);
+      } else if (imageOpt.size > MAX_IMAGE_BYTES) {
+        console.warn(`/ask: skipping oversized image ${imageOpt.name}: ${imageOpt.size} bytes`);
+      } else {
+        const img = await fetchImage(imageOpt.url, imageOpt.contentType, imageOpt.name);
+        if (img) images.push(img);
+      }
+    }
     startTyping(channelId);
 
     if (sessionManager.isPrompting(channelId)) {
@@ -739,7 +795,7 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
 
     try {
       const guildId = interaction.guildId ?? null;
-      await promptWithMcp(channelId, text, resolved.agentName, guildId, resolved.agent, interaction.user.id);
+      await promptWithMcp(channelId, text, resolved.agentName, guildId, resolved.agent, interaction.user.id, images);
     } catch (err) {
       stopTyping(channelId);
       const errMsg = err instanceof Error ? err.message : String(err);
