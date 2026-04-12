@@ -29,11 +29,32 @@ jobs:
       - name: Set version from tag
         run: pnpm pkg set version="${GITHUB_REF_NAME#v}"
 
-      - run: pnpm publish --no-git-checks --provenance --access public
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$version" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            # Extract dist-tag from prerelease identifier (e.g. 1.2.3-beta.0 -> beta)
+            dist_tag="${version#*-}"
+            dist_tag="${dist_tag%%.*}"
+            echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: pnpm publish --no-git-checks --provenance --access public --tag "${{ steps.prerelease.outputs.dist_tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+          IS_PRERELEASE: ${{ steps.prerelease.outputs.is_prerelease }}
+        run: |
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            gh release create "$GITHUB_REF_NAME" --generate-notes --prerelease
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes
+          fi
