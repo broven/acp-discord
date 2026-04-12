@@ -25,6 +25,20 @@ describe("splitMessage", () => {
     }
   });
 
+  it("keeps chunks under the limit when splitting inside a code block with very long lines", () => {
+    // Regression: a single diff line longer than 2000 chars used to produce a
+    // chunk of 2004 chars once the closing fence was appended, which Discord
+    // rejected with 50035 BASE_TYPE_MAX_LENGTH.
+    const hugeLine = "x".repeat(3000);
+    const msg = "**file**\n```diff\n+" + hugeLine + "\n```";
+    const chunks = splitMessage(msg);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(2000);
+      const fences = (chunk.match(/```/g) || []).length;
+      expect(fences % 2).toBe(0);
+    }
+  });
+
   it("splits at newline boundaries when possible", () => {
     const lines = Array.from({ length: 100 }, (_, i) => `Line ${i}`).join("\n");
     const chunks = splitMessage(lines);
