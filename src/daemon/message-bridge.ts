@@ -4,8 +4,15 @@ import type { DiffContent } from "./acp-client.js";
 const DISCORD_MAX_LENGTH = 2000;
 const MAX_DIFF_LINES = 150;
 
+const CLOSE_FENCE = "\n```";
+
 export function splitMessage(text: string, maxLength = DISCORD_MAX_LENGTH): string[] {
   if (text.length <= maxLength) return [text];
+
+  // Reserve room for a possible closing fence we may append when splitting
+  // inside a code block. Without this reservation the appended fence can push
+  // a chunk past maxLength and Discord will reject the message.
+  const budget = maxLength - CLOSE_FENCE.length;
 
   const chunks: string[] = [];
   let remaining = text;
@@ -18,10 +25,10 @@ export function splitMessage(text: string, maxLength = DISCORD_MAX_LENGTH): stri
       break;
     }
 
-    // Find split point: prefer newline before maxLength
-    let splitAt = maxLength;
-    const lastNewline = remaining.lastIndexOf("\n", maxLength);
-    if (lastNewline > maxLength * 0.5) {
+    // Find split point: prefer newline before budget
+    let splitAt = budget;
+    const lastNewline = remaining.lastIndexOf("\n", budget);
+    if (lastNewline > budget * 0.5) {
       splitAt = lastNewline + 1;
     }
 
@@ -42,7 +49,7 @@ export function splitMessage(text: string, maxLength = DISCORD_MAX_LENGTH): stri
 
     // If we're inside a code block at the split, close and reopen
     if (inCodeBlock) {
-      chunk += "\n```";
+      chunk += CLOSE_FENCE;
       remaining = codeFence + "\n" + remaining;
       inCodeBlock = false;
       codeFence = "";
