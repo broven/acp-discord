@@ -278,6 +278,43 @@ server.tool(
   },
 );
 
+// Tool: run_task_now
+server.tool(
+  "run_task_now",
+  "Immediately execute a scheduled task and return the result (requires user approval)",
+  {
+    task_id: z.string().describe("ID of the task to execute immediately"),
+  },
+  async ({ task_id }) => {
+    try {
+      const approved = await requestConfirmation(
+        "Run scheduled task now",
+        `Task ID: ${task_id}`,
+      );
+      if (!approved) {
+        return mcpError("Action rejected by user.");
+      }
+
+      const response = await ipcRequest({
+        action: "run_task_now",
+        requestId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        taskId: task_id,
+        channelId: SOURCE_CHANNEL_ID,
+      });
+
+      if (response.error) {
+        return mcpError(`Error: ${response.error}`);
+      }
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(response.log, null, 2) }],
+      };
+    } catch (err) {
+      return mcpError(`Failed to run task: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  },
+);
+
 // --- Start ---
 
 async function main() {
