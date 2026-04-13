@@ -209,7 +209,13 @@ export class SessionManager {
 
     // Handle spawn errors (ENOENT, permission denied, etc.) (#4)
     proc.on("error", (err) => {
-      console.error(`Agent process error for channel ${channelId}:`, err);
+      const e = err as NodeJS.ErrnoException;
+      console.error(
+        `Agent process error for channel ${channelId}: ${e.message} ` +
+          `(code=${e.code ?? "?"} syscall=${e.syscall ?? "?"} ` +
+          `command=${config.command} cwd=${config.cwd})`,
+        err,
+      );
       const session = this.sessions.get(channelId);
       if (session?.process === proc) {
         clearTimeout(session.idleTimer);
@@ -297,7 +303,13 @@ export class SessionManager {
     });
 
     proc.on("error", (err) => {
-      console.error(`Agent process error for channel ${channelId}:`, err);
+      const e = err as NodeJS.ErrnoException;
+      console.error(
+        `Agent process error for channel ${channelId}: ${e.message} ` +
+          `(code=${e.code ?? "?"} syscall=${e.syscall ?? "?"} ` +
+          `command=${config.command} cwd=${config.cwd})`,
+        err,
+      );
       const session = this.sessions.get(channelId);
       if (session?.process === proc) {
         clearTimeout(session.idleTimer);

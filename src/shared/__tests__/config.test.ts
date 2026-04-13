@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { homedir } from "node:os";
 import { parseConfig, resolveChannelConfig } from "../config.js";
 
 const VALID_TOML = `
@@ -69,6 +70,25 @@ token = "t"
 command = "npx"
 idle_timeout = -1
 `)).toThrow("idle_timeout");
+  });
+
+  it("expands ~ in agent and channel cwd", () => {
+    const config = parseConfig(`
+[discord]
+token = "t"
+[agents.default]
+command = "npx"
+cwd = "~/work"
+[channels.123]
+agent = "default"
+cwd = "~/.hermes"
+[channels.456]
+agent = "default"
+cwd = "~"
+`);
+    expect(config.agents.default.cwd).toBe(`${homedir()}/work`);
+    expect(config.channels["123"].cwd).toBe(`${homedir()}/.hermes`);
+    expect(config.channels["456"].cwd).toBe(homedir());
   });
 
   it("throws on channel referencing unknown agent", () => {

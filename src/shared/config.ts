@@ -1,6 +1,13 @@
 import { parse, stringify } from "smol-toml";
 import { readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import type { AppConfig, ChannelConfig, ResolvedChannelConfig } from "./types.js";
+
+function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return homedir() + p.slice(1);
+  return p;
+}
 
 export function parseConfig(toml: string): AppConfig {
   const raw = parse(toml) as Record<string, unknown>;
@@ -57,7 +64,7 @@ export function parseConfig(toml: string): AppConfig {
     parsedAgents[name] = {
       command: agent.command,
       args: (agent.args as string[]) ?? [],
-      cwd: typeof agent.cwd === "string" ? agent.cwd : process.cwd(),
+      cwd: typeof agent.cwd === "string" ? expandHome(agent.cwd) : process.cwd(),
       idle_timeout: typeof agent.idle_timeout === "number" ? agent.idle_timeout : 600,
       discord_tools: agent.discord_tools === true,
       scheduled_tasks: agent.scheduled_tasks === true,
@@ -89,7 +96,7 @@ export function parseConfig(toml: string): AppConfig {
 
     parsedChannels[id] = {
       agent: agentRef,
-      cwd: ch.cwd ? String(ch.cwd) : undefined,
+      cwd: ch.cwd ? expandHome(String(ch.cwd)) : undefined,
       auto_reply: ch.auto_reply === true,
       discord_tools: ch.discord_tools ?? undefined,
       scheduled_tasks: ch.scheduled_tasks ?? undefined,
