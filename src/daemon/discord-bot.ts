@@ -323,6 +323,43 @@ export async function startDiscordBot(config: AppConfig, sessionsPath: string, c
       getTaskLogs(taskId, channelId) {
         return { logs: taskScheduler.getTaskLogs(taskId, channelId) };
       },
+      async runTaskNow(taskId, channelId) {
+        const task = taskScheduler.getTask(taskId, channelId);
+        if (!task) return { error: `Task ${taskId} not found` };
+
+        const resolved = router.resolve(task.channel_id);
+        if (!resolved) return { error: `No resolved config for channel ${task.channel_id}` };
+
+        const channel = await fetchChannel(task.channel_id);
+        const guildId = channel?.guild?.id ?? null;
+        const mcpServers = guildId ? buildMcpServers(task.channel_id, task.agent_name, guildId) : [];
+
+        const startedAt = new Date();
+        const result = await runTask(resolved.agent, task.prompt, mcpServers);
+        const completedAt = new Date();
+        const durationMs = completedAt.getTime() - startedAt.getTime();
+
+        taskScheduler.logRun(task.id, {
+          startedAt,
+          completedAt,
+          durationMs,
+          status: result.error ? "error" : "success",
+          output: result.output,
+          error: result.error,
+        });
+
+        return {
+          log: {
+            task_id: task.id,
+            started_at: startedAt.toISOString(),
+            completed_at: completedAt.toISOString(),
+            duration_ms: durationMs,
+            status: result.error ? "error" : "success",
+            output: result.output.slice(0, 4000),
+            error: result.error,
+          },
+        };
+      },
     },
     DEFAULT_IPC_SOCKET_PATH,
   );

@@ -40,6 +40,7 @@ export interface IpcHandler {
   updateTask?(taskId: string, updates: Record<string, unknown>, channelId?: string): TaskCrudResult;
   deleteTask?(taskId: string, channelId?: string): TaskCrudResult;
   getTaskLogs?(taskId?: string, channelId?: string): TaskCrudResult;
+  runTaskNow?(taskId: string, channelId?: string): Promise<TaskCrudResult>;
 }
 
 interface IpcMessage {
@@ -240,6 +241,18 @@ export class IpcServer {
         if (!msg.requestId || !this.handler.getTaskLogs) break;
         const logsResult = this.handler.getTaskLogs(msg.taskId, msg.channelId);
         socket.write(JSON.stringify({ requestId: msg.requestId, ...logsResult }) + "\n");
+        break;
+      }
+
+      case "run_task_now": {
+        if (!msg.requestId || !msg.taskId || !this.handler.runTaskNow) break;
+        try {
+          const runResult = await this.handler.runTaskNow(msg.taskId, msg.channelId);
+          socket.write(JSON.stringify({ requestId: msg.requestId, ...runResult }) + "\n");
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          socket.write(JSON.stringify({ requestId: msg.requestId, error: errMsg }) + "\n");
+        }
         break;
       }
 

@@ -120,6 +120,13 @@ export class TaskScheduler {
     return task;
   }
 
+  getTask(id: string, channelId?: string): ScheduledTask | null {
+    const task = this.tasks.find((t) => t.id === id);
+    if (!task) return null;
+    if (channelId && task.channel_id !== channelId) return null;
+    return task;
+  }
+
   listTasks(channelId?: string): ScheduledTask[] {
     if (channelId) {
       return this.tasks.filter((t) => t.channel_id === channelId);
