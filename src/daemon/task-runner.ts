@@ -63,10 +63,7 @@ export async function runTask(
 
     await connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        terminal: true,
-      },
+      clientCapabilities: {},
       clientInfo: {
         name: "acp-discord-task-runner",
         title: "ACP Discord Task Runner",

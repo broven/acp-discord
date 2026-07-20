@@ -250,10 +250,7 @@ export class SessionManager {
 
       await connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
-          terminal: true,
-        },
+        clientCapabilities: {},
         clientInfo: {
           name: "acp-discord",
           title: "ACP Discord Bot",
@@ -343,10 +340,7 @@ export class SessionManager {
 
       const initResult = await connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
-          terminal: true,
-        },
+        clientCapabilities: {},
         clientInfo: {
           name: "acp-discord",
           title: "ACP Discord Bot",
